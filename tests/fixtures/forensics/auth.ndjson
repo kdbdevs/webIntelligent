@@ -1,0 +1,5 @@
+{"timestamp": "2025-05-10T02:00:00Z", "event": "export.requested", "user": "alice@example.test", "ip": "198.51.100.24", "requestId": "req-42", "sessionId": "SECRET_SESSION", "url": "https://portal.example.test/export?token=SECRET_URL", "password": "SECRET_PASSWORD"}
+{"timestamp": "2025-05-10T02:00:01Z", "event": "unrelated.login", "user": "bob@example.test", "ip": "198.51.100.24", "requestId": "req-99"}
+{"timestamp": "2025-05-10T09:02:00", "event": "clock-unknown", "user": "alice@example.test", "ip": "203.0.113.9"}
+not-json
+{"timestamp": "2025-05-10T09:02:00+07:00", "event": "explicit-zone", "user": "alice@example.test"}

@@ -1,0 +1,13 @@
+{
+  "events": [
+    {
+      "meta": {
+        "when": "2025-05-10T04:00:00+02:00"
+      },
+      "action": "export.completed",
+      "principal": "alice@example.test",
+      "rid": "req-42",
+      "other": "SECRET_UNUSED"
+    }
+  ]
+}

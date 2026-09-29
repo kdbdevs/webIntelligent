@@ -1,4 +1,10 @@
 import { CaseManager, EvidencePanel } from './CaseEvidence';
+import { AuthSession } from './AuthSession';
+import { WiringExplorer } from './WiringExplorer';
+import { SecurityFindings } from './SecurityFindings';
+const ForensicWorkspace = React.lazy(() =>
+  import('./ForensicWorkspace').then((m) => ({ default: m.ForensicWorkspace })),
+);
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
@@ -90,7 +96,13 @@ function Evidence({ kind = 'observed', children }) {
         <Code2 size={11} />
       )}
       {children ||
-        { observed: 'Teramati', declared: 'Deklarasi HTML', unknown: 'Belum diketahui' }[kind]}
+        {
+          observed: 'Teramati',
+          declared: 'Deklarasi HTML',
+          correlated: 'Korelasi',
+          inferred: 'Dugaan',
+          unknown: 'Belum diketahui',
+        }[kind]}
     </span>
   );
 }
@@ -110,6 +122,37 @@ function Empty({ icon: Icon = Search, title, children }) {
       <p>{children}</p>
     </div>
   );
+}
+function EvidenceLinks({ refs }) {
+  return refs?.length ? (
+    <div className="graph-evidence-links">
+      {refs.map((r, i) => (
+        <a
+          key={i}
+          href={`/api/cases/${r.caseId}/runs/${r.runId}/artifacts/${r.artifactId}/content`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Bukti {r.artifactId.slice(0, 8)} · {r.pointer}
+        </a>
+      ))}
+    </div>
+  ) : (
+    <p className="muted small">Referensi per-capture tidak tersedia pada graph legacy ini.</p>
+  );
+}
+function captureRefs(job, page, pointer = '/') {
+  return page?.extractionArtifactId
+    ? [
+        {
+          caseId: job.caseId,
+          runId: job.id,
+          artifactId: page.extractionArtifactId,
+          captureId: page.captureId || null,
+          pointer,
+        },
+      ]
+    : [];
 }
 function FlowCard({ data, selected }) {
   return (
@@ -141,6 +184,15 @@ function FlowCanvas({ graph, onSelect, graphKey }) {
         onNodesChange={(changes) => setNodes((old) => applyNodeChanges(changes, old))}
         onEdgesChange={(changes) => setEdges((old) => applyEdgeChanges(changes, old))}
         onNodeClick={(_, node) => onSelect(node.data)}
+        onEdgeClick={(_, edge) =>
+          onSelect(
+            edge.data || {
+              title: 'Relasi',
+              kind: 'unknown',
+              explanation: 'Referensi detail tidak tersedia pada graph legacy ini.',
+            },
+          )
+        }
         nodesConnectable={false}
         edgesReconnectable={false}
         fitView
@@ -164,12 +216,25 @@ function edge(id, source, target, label, kind = 'observed') {
     source,
     target,
     label,
+    relation: kind,
+    data: {
+      title: label,
+      kind,
+      explanation:
+        kind === 'correlated'
+          ? 'Kecocokan nama/waktu; kausalitas belum terbukti.'
+          : kind === 'unknown'
+            ? 'Jalur internal tidak diobservasi.'
+            : kind === 'declared'
+              ? 'Deklarasi, bukan bukti bahwa aksi terjadi.'
+              : 'Metadata browser teramati.',
+    },
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed, color: kind === 'unknown' ? '#94a29b' : '#558978' },
     style: {
       stroke: kind === 'unknown' ? '#94a29b' : '#558978',
       strokeWidth: 1.5,
-      strokeDasharray: kind === 'unknown' ? '5 5' : undefined,
+      strokeDasharray: ['unknown', 'correlated', 'inferred'].includes(kind) ? '5 5' : undefined,
     },
     labelStyle: { fontSize: 10, fill: '#50695f' },
     labelBgStyle: { fill: '#f6f9f7' },
@@ -178,15 +243,19 @@ function edge(id, source, target, label, kind = 'observed') {
 function relatedRequests(job, page, element) {
   if (!element) return [];
   return job.requests.filter((r) => {
-    const samePage = r.pageId === page.id || r.pageUrl === page.url;
+    const samePage = page.captureId
+      ? r.frameId === page.frameId && r.documentEpoch === page.documentEpoch
+      : r.pageId === page.id || r.pageUrl === page.url;
     const exactEvent =
-      r.event?.selector === element.selector ||
+      (page.captureId
+        ? r.event?.documentId === page.documentId && r.event?.domNodeId === element.domNodeId
+        : r.event?.selector === element.selector) ||
       (element.form && r.event?.formSelector === element.form.selector);
     const parameterMatch = element.name && r.body.fields.some((f) => f.name === element.name);
     return samePage && (exactEvent || parameterMatch);
   });
 }
-function makeDataGraph(element, requests) {
+function makeDataGraph(element, requests, job, page) {
   if (!element) return { nodes: [], edges: [] };
   const request = requests
     .filter((r) => ['fetch', 'xhr', 'document'].includes(r.resourceType))
@@ -302,12 +371,33 @@ function makeDataGraph(element, requests) {
     { targetPosition: Position.Right, sourcePosition: Position.Bottom },
     { targetPosition: Position.Top },
   ];
+  const refs = captureRefs(
+    job,
+    page,
+    `/elements/${page.elements.findIndex((el) => el.id === element.id)}`,
+  );
+  const requestRefs = page.observationsArtifactId
+    ? [
+        {
+          caseId: job.caseId,
+          runId: job.id,
+          artifactId: page.observationsArtifactId,
+          captureId: page.captureId,
+          pointer: '/requests',
+        },
+      ]
+    : refs;
   return {
     nodes: items.map((item, i) => ({
       id: item.id,
       type: 'card',
       position: positions[i],
-      data: { ...item, ...handles[i] },
+      data: {
+        ...item,
+        ...handles[i],
+        evidence:
+          ['payload', 'request', 'response'].includes(item.id) && request ? requestRefs : refs,
+      },
     })),
     edges: items
       .slice(1)
@@ -324,9 +414,20 @@ function makeDataGraph(element, requests) {
             'endpoint',
             'respons',
           ][i],
-          [1, 2, 4].includes(i) ? 'unknown' : request ? 'observed' : 'declared',
+          [1, 2, 4, 5].includes(i) ? 'unknown' : request ? 'correlated' : 'declared',
         ),
-      ),
+      )
+      .map((e) => ({
+        ...e,
+        evidence: [...refs, ...requestRefs],
+        data: {
+          ...e.data,
+          evidence: [...refs, ...requestRefs],
+          explanation:
+            e.data.explanation +
+            ' Ringkasan ini tidak membuktikan seluruh alur eksekusi; lihat Wiring & aset untuk relasi per kejadian.',
+        },
+      })),
   };
 }
 function ElementInspector({ element, page, job, onTrace }) {
@@ -532,10 +633,38 @@ export default function App() {
     [filter, setFilter] = useState(''),
     [graphDetail, setGraphDetail] = useState(null),
     [mobileNav, setMobileNav] = useState(false);
+  const [capturedRequests, setCapturedRequests] = useState(null);
   const page = job?.pages.find((p) => p.id === pageId) || job?.pages[0];
   const element = page?.elements.find((e) => e.id === elementId) || page?.elements[0];
   const isRunning = job && busyStatus(job.status),
     recording = !!job?.session;
+  useEffect(() => {
+    let active = true;
+    setCapturedRequests(null);
+    if (page?.observationsArtifactId) {
+      const artifactId = page.observationsArtifactId;
+      api(`/api/cases/${job.caseId}/runs/${job.id}/artifacts/${artifactId}/content`)
+        .then((data) => active && setCapturedRequests({ artifactId, requests: data.requests }))
+        .catch((error) => active && setError(error.message));
+    }
+    return () => {
+      active = false;
+    };
+  }, [job?.caseId, job?.id, page?.observationsArtifactId]);
+  // Graph references must describe the frozen capture, not later traffic in the active run.
+  const graphJob = useMemo(
+    () =>
+      page?.observationsArtifactId
+        ? {
+            ...job,
+            requests:
+              capturedRequests?.artifactId === page.observationsArtifactId
+                ? capturedRequests.requests
+                : [],
+          }
+        : job,
+    [job, page?.observationsArtifactId, capturedRequests],
+  );
   const refreshHistory = () =>
     api('/api/audits')
       .then(setHistory)
@@ -629,11 +758,37 @@ export default function App() {
       setJob(updated);
       refreshHistory();
     });
+  const authenticatedAction = (endpoint, body = {}) =>
+    action(async () => {
+      const updated = await api(`/api/sessions/${job.id}/${endpoint}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setJob(updated);
+      refreshHistory();
+    });
+  const openAuthenticated = (options) =>
+    action(async () => {
+      const created = await api('/api/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ ...options, caseId, url, maxPages, allowLocal }),
+      });
+      setJob(created);
+      setPageId(null);
+      setElementId(null);
+      setRequestId(null);
+      setGraphDetail(null);
+      setTab('elements');
+      refreshHistory();
+    });
   const requests = useMemo(
-    () => (job && page ? relatedRequests(job, page, element) : []),
-    [job, page, element],
+    () => (graphJob && page ? relatedRequests(graphJob, page, element) : []),
+    [graphJob, page, element],
   );
-  const dataGraph = useMemo(() => makeDataGraph(element, requests), [element, requests]);
+  const dataGraph = useMemo(
+    () => makeDataGraph(element, requests, job, page),
+    [element, requests, job, page],
+  );
   const routeGraph = useMemo(() => {
     if (!job) return { nodes: [], edges: [] };
     const urls = job.pages.map((p) => p.url);
@@ -643,6 +798,7 @@ export default function App() {
         urls.push(e.to);
     const nodes = urls.map((u, i) => {
       const p = job.pages.find((p) => p.url === u);
+      const declarationPage = p || job.pages.find((x) => x.links?.some((l) => l.href === u));
       return {
         id: `route${i}`,
         type: 'card',
@@ -654,6 +810,7 @@ export default function App() {
           eyebrow: p ? `${p.elements.length} ELEMEN · HTTP ${p.httpStatus || '—'}` : 'URL TUJUAN',
           pageId: p?.id,
           url: u,
+          evidence: captureRefs(job, declarationPage, p ? '/url' : '/links'),
           explanation: p
             ? `Snapshot ${p.elements.length} elemen dari ${u}. Klik Buka halaman untuk inspect.`
             : 'URL ada dalam href sebuah link. Halaman ini belum dibuka oleh crawler.',
@@ -663,15 +820,30 @@ export default function App() {
     const edges = job.edges
       .filter((e) => urls.includes(e.from) && urls.includes(e.to) && e.from !== e.to)
       .slice(0, 80)
-      .map((e, i) =>
-        edge(
+      .map((e, i) => {
+        const item = edge(
           `routeedge${i}`,
           `route${urls.indexOf(e.from)}`,
           `route${urls.indexOf(e.to)}`,
           e.label.slice(0, 24),
           'declared',
-        ),
-      );
+        );
+        const refs = captureRefs(
+          job,
+          job.pages.find((p) => p.url === e.from),
+          '/links',
+        );
+        return {
+          ...item,
+          evidence: refs,
+          data: {
+            ...item.data,
+            evidence: refs,
+            explanation:
+              'Href dideklarasikan pada halaman sumber. URL tersensor dapat mengelompokkan variasi query/fragmen; lihat capture wiring untuk identitas elemen.',
+          },
+        };
+      });
     return { nodes, edges };
   }, [job?.pages, job?.edges]);
   const network = (job?.requests || []).filter(
@@ -751,7 +923,7 @@ export default function App() {
                   <span>
                     <strong>{hostname(h.url)}</strong>
                     <small>
-                      {h.mode === 'record' ? 'Rekam · ' : ''}
+                      {['record', 'authenticated'].includes(h.mode) ? 'Sesi · ' : ''}
                       {h.legacy ? 'Legacy · ' : ''}
                       {h.pageCount} halaman · {prettyTime(h.createdAt)}
                     </small>
@@ -768,7 +940,7 @@ export default function App() {
             <span /> Berjalan lokal
           </div>
           <p>Data audit tersimpan di komputer ini.</p>
-          <code>v1.1 / Cases + Evidence</code>
+          <code>v1.5 / Case Forensics</code>
         </div>
       </aside>
       <main className="main">
@@ -817,6 +989,14 @@ export default function App() {
             if (job?.caseId !== c.id) setJob(null);
           }}
         />
+        <React.Suspense fallback={<p>Memuat workspace forensik…</p>}>
+          <ForensicWorkspace
+            key={caseId || 'no-case'}
+            caseId={caseId}
+            operator={cases.find((c) => c.id === caseId)?.operator}
+            disabled={pending || isRunning || recording}
+          />
+        </React.Suspense>
         <section className="scan-box" aria-label="Mulai audit website">
           <form
             onSubmit={(e) => {
@@ -840,7 +1020,7 @@ export default function App() {
               ) : (
                 <ScanLine size={16} />
               )}
-              <span>{isRunning ? 'Memindai…' : 'Audit website'}</span>
+              <span>{recording ? 'Sesi aktif' : isRunning ? 'Memindai…' : 'Audit website'}</span>
               <ArrowRight size={16} />
             </button>
           </form>
@@ -872,6 +1052,15 @@ export default function App() {
             </span>
           </div>
         </section>
+        <AuthSession
+          job={job}
+          caseId={caseId}
+          scope={cases.find((c) => c.id === caseId)?.scope.navigation}
+          disabled={pending || isRunning || recording}
+          pending={pending}
+          onOpen={openAuthenticated}
+          onAction={authenticatedAction}
+        />
         {error && (
           <div className="error-banner" role="alert">
             <AlertTriangle size={17} />
@@ -996,6 +1185,7 @@ export default function App() {
               </div>
             </div>
             <EvidencePanel job={job} onError={setError} />
+            <SecurityFindings key={job.id} job={job} />
             {job.warnings.length > 0 && (
               <details className="warnings">
                 <summary>
@@ -1016,6 +1206,7 @@ export default function App() {
                       ['routes', GitBranch, 'Alur halaman'],
                       ['data', Braces, 'Alur data'],
                       ['network', Network, 'Network'],
+                      ['wiring', Layers3, 'Wiring & aset'],
                     ].map(([id, Icon, title]) => (
                       <button
                         key={id}
@@ -1032,50 +1223,17 @@ export default function App() {
                     ))}
                   </div>
                   <div className="record-actions">
-                    {recording ? (
-                      <>
-                        <span className="recording-label">
-                          <Radio size={13} /> Merekam
-                        </span>
-                        <button
-                          className="icon-button"
-                          aria-label="Ambil snapshot sesi rekam"
-                          title="Ambil snapshot terbaru"
-                          disabled={pending}
-                          onClick={() => sessionAction('capture')}
-                        >
-                          <RefreshCw size={15} />
-                        </button>
-                        <button
-                          className="button secondary small-button"
-                          disabled={pending}
-                          onClick={() => sessionAction('stop-recording')}
-                        >
-                          <Square size={12} /> Selesai
-                        </button>
-                      </>
-                    ) : (
+                    {job.mode !== 'authenticated' && (
                       <button
                         className="button secondary small-button"
                         disabled={pending || isRunning}
                         onClick={() => sessionAction('record')}
                       >
-                        {pending ? <Loader2 className="spin" size={14} /> : <Play size={13} />}{' '}
-                        Rekam interaksi
+                        <Play size={13} /> Rekam interaksi
                       </button>
                     )}
                   </div>
                 </div>
-                {recording && (
-                  <div className="record-banner">
-                    <Radio size={17} />
-                    <span>
-                      <strong>Browser rekam terbuka di komputer lo.</strong> Lakukan interaksi di
-                      sana. Request tercatat otomatis; klik refresh untuk memperbarui snapshot. Sesi
-                      berhenti dalam 10 menit.
-                    </span>
-                  </div>
-                )}
                 <div className="page-strip">
                   <label>
                     <PanelTop size={14} />
@@ -1107,6 +1265,15 @@ export default function App() {
                 {page.warnings.length > 0 && (
                   <div className="page-notes">{page.warnings.join(' ')}</div>
                 )}
+                {tab === 'wiring' && (
+                  <WiringExplorer
+                    job={job}
+                    page={page}
+                    element={element}
+                    onElementSelect={setElementId}
+                    onPageSelect={selectPage}
+                  />
+                )}
                 {tab === 'elements' && (
                   <div className="elements-layout">
                     <div className="elements-list">
@@ -1134,7 +1301,9 @@ export default function App() {
                                   <strong>{el.label}</strong>
                                   <code>{el.name ? `name=${el.name}` : el.tag}</code>
                                 </span>
-                                <small>{el.id.slice(1).padStart(2, '0')}</small>
+                                <small>
+                                  {String(el.ordinal || el.id.slice(1)).padStart(2, '0')}
+                                </small>
                               </button>
                             );
                           })
@@ -1170,7 +1339,7 @@ export default function App() {
                                     }}
                                     onClick={() => setElementId(el.id)}
                                   >
-                                    <span>{el.id.slice(1)}</span>
+                                    <span>{el.ordinal || el.id.slice(1)}</span>
                                   </button>
                                 ))}
                             </div>
@@ -1185,7 +1354,7 @@ export default function App() {
                     <aside className="detail-panel">
                       <ElementInspector
                         element={element}
-                        job={job}
+                        job={graphJob}
                         page={page}
                         onTrace={() => {
                           setTab('data');
@@ -1211,6 +1380,7 @@ export default function App() {
                             'Setiap node adalah URL. Garis menunjukkan link href yang ditemukan; bukan klaim bahwa navigasi sudah dijalankan.'}
                         </p>
                         {graphDetail?.url && <code className="selector">{graphDetail.url}</code>}
+                        {graphDetail && <EvidenceLinks refs={graphDetail.evidence} />}
                         {graphDetail?.pageId && (
                           <button
                             className="button primary full"
@@ -1274,6 +1444,7 @@ export default function App() {
                                 <Evidence kind={graphDetail.kind} />
                                 <p>{graphDetail.explanation}</p>
                                 <code className="selector">{graphDetail.detail}</code>
+                                <EvidenceLinks refs={graphDetail.evidence} />
                               </>
                             ) : (
                               <>

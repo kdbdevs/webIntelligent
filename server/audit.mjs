@@ -3,7 +3,12 @@ import { readFile, readdir, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { installObserver, extractPage } from './browser-scripts.mjs';
-import { EvidenceStore, LIMITS, PRIVACY, inScope, fail } from './evidence.mjs';
+import { extractVisuals } from './visual-scripts.mjs';
+import { SourceCatalog, sanitizeVisuals, requestParameters, buildWiring } from './wiring.mjs';
+import { EvidenceStore, LIMITS, PRIVACY, inScope, fail, isOfflineMode } from './evidence.mjs';
+import { SessionManager } from './sessions.mjs';
+import { redirectGuard } from './redirect-guard.mjs';
+import { requestSecurityMetadata, responseSecurityMetadata } from './security-metadata.mjs';
 import {
   validateDestination,
   displayUrl,
@@ -15,6 +20,7 @@ import {
 export async function launchBrowser(headless = true) {
   const options = {
     headless,
+    timeout: 30000,
     ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}),
   };
   try {
@@ -29,7 +35,7 @@ export async function launchBrowser(headless = true) {
 }
 
 export class AuditManager {
-  constructor(directory) {
+  constructor(directory, { sessionLauncher = launchBrowser } = {}) {
     this.directory = directory;
     this.store = new EvidenceStore(directory);
     this.migrationWarnings = [];
@@ -37,6 +43,9 @@ export class AuditManager {
     this.runners = new Map();
     this.sessions = new Map();
     this.sessionOpening = false;
+    this.sourceCatalogs = new WeakMap();
+    this.securityPending = new WeakMap();
+    this.sessionManager = new SessionManager(this, sessionLauncher);
   }
   async init() {
     await this.store.init();
@@ -45,12 +54,21 @@ export class AuditManager {
       const run = this.store.getRun(job.caseId, job.id);
       job.session = null;
       if (run.status === 'running') {
+        if (job.sessionInfo)
+          job.sessionInfo = {
+            ...job.sessionInfo,
+            status: 'failed',
+            collecting: false,
+            reason:
+              'Server stopped; last checkpoint recovered. Authentication context was not persisted.',
+          };
         job.status = 'interrupted';
         job.message = 'Capture terputus saat server berhenti; data terakhir dipertahankan.';
         job.warnings.push(job.message);
         this.store.seal(job, job.message);
       }
-      this.jobs.set(job.id, job);
+      if (!isOfflineMode(run.mode))
+        this.jobs.set(job.id, job);
     }
   }
   async importLegacy() {
@@ -238,18 +256,74 @@ export class AuditManager {
       .finally(() => this.runners.delete(id));
     return job;
   }
-  async instrument(context, job, mode) {
+  async instrument(context, job, mode, controls = {}) {
     const scope = this.store.getRun(job.caseId, job.id).scope.navigation;
     const pageIds = new WeakMap();
     const initiators = new WeakMap();
     const recentEvents = new WeakMap();
     const requests = new WeakMap();
     const checked = new Map();
+    const catalog = new SourceCatalog();
+    this.sourceCatalogs.set(job, catalog);
+    const epochs = new WeakMap(),
+      frameIds = new WeakMap();
+    const frameId = (frame) => {
+      if (!frameIds.has(frame)) frameIds.set(frame, `f-${randomUUID()}`);
+      return frameIds.get(frame);
+    };
+    const metadata = (page) => ({
+      frameId: frameId(page.mainFrame()),
+      documentEpoch: epochs.get(page) || 0,
+    });
     const warn = (text) => {
       if (job.warnings.length < 50 && !job.warnings.includes(text)) job.warnings.push(text);
     };
+    const policyReason = (request) =>
+      controls.routeReason
+        ? controls.routeReason(request)
+        : request.isNavigationRequest() && !inScope(request.url(), scope)
+          ? 'Tujuan di luar scope navigasi kasus.'
+          : null;
+    const ensureRedirectGuard = redirectGuard(
+      context,
+      async ({ page, source, url, status, request }) => {
+        let reason = policyReason(request);
+        if (!reason) {
+          try {
+            await validateDestination(url, job.allowLocal);
+          } catch {
+            reason = 'Tujuan redirect tidak diizinkan atau gagal di-resolve.';
+          }
+        }
+        if (!reason && mode === 'passive' && !['GET', 'HEAD', 'OPTIONS'].includes(request.method()))
+          reason = 'Redirect metode non-GET/HEAD/OPTIONS diblokir pada audit pasif.';
+        if (
+          request.isNavigationRequest() ||
+          reason ||
+          !controls.canObserve ||
+          controls.canObserve(page)
+        ) {
+          job.redirects ||= [];
+          if (job.redirects.length < 100)
+            job.redirects.push({
+              from: displayUrl(source),
+              to: displayUrl(url),
+              status,
+              method: request.method(),
+              at: new Date().toISOString(),
+              outcome: reason ? 'blocked' : 'allowed',
+              reason,
+            });
+          else warn('Batas 100 catatan redirect tercapai.');
+        }
+        if (reason) warn(reason);
+        return reason;
+      },
+      () => warn('Pemeriksaan redirect gagal; respons dihentikan.'),
+    );
     await context.exposeBinding('__wiReport', ({ page, frame }, payload) => {
       if (!payload || typeof payload !== 'object' || frame !== page.mainFrame()) return;
+      if (controls.canObserve && !controls.canObserve(page)) return;
       const now = Date.now();
       if (payload.kind === 'event' && mode === 'record' && job.events.length >= LIMITS.events)
         warn('Batas 500 event tercapai; sebagian event tidak dicatat.');
@@ -258,6 +332,10 @@ export class AuditManager {
           id: String(payload.id || randomUUID()).slice(0, 80),
           pageId: pageIds.get(page) || null,
           pageUrl: displayUrl(page.url()),
+          ...metadata(page),
+          documentId: String(payload.documentId || '').slice(0, 80),
+          domNodeId: String(payload.domNodeId || '').slice(0, 80),
+          formNodeId: payload.formNodeId ? String(payload.formNodeId).slice(0, 80) : null,
           type: String(payload.event).slice(0, 30),
           selector: String(payload.selector).slice(0, 600),
           name: String(payload.name || '').slice(0, 120),
@@ -266,6 +344,32 @@ export class AuditManager {
         };
         job.events.push(event);
         recentEvents.set(page, event);
+      }
+      if (payload.kind === 'change') {
+        job.changes ||= [];
+        if (job.changes.length >= 300) {
+          warn('Batas 300 batch perubahan DOM/SPA tercapai.');
+          return;
+        }
+        job.changes.push({
+          id: randomUUID(),
+          ...metadata(page),
+          documentId: String(payload.documentId || '').slice(0, 80),
+          type: String(payload.type).slice(0, 60),
+          at: now,
+          url: payload.url ? displayUrl(String(payload.url)) : null,
+          count: Number(payload.count) || 0,
+          changes: Array.isArray(payload.changes)
+            ? payload.changes.slice(0, 20).map((c) => ({
+                domNodeId: String(c.domNodeId).slice(0, 80),
+                selector: String(c.selector).slice(0, 600),
+                type: String(c.type).slice(0, 40),
+                attribute: c.attribute ? String(c.attribute).slice(0, 80) : null,
+                added: Number(c.added) || 0,
+                removed: Number(c.removed) || 0,
+              }))
+            : [],
+        });
       }
       if (payload.kind === 'initiator') {
         let url;
@@ -277,6 +381,8 @@ export class AuditManager {
         const recent = initiators.get(page) || [];
         recent.push({
           url: displayUrl(url),
+          sourceKey: catalog.source(url).requestKey,
+          documentId: String(payload.documentId || '').slice(0, 80),
           method: String(payload.method).slice(0, 20),
           transport: String(payload.transport).slice(0, 30),
           stack: cleanStack(payload.stack),
@@ -292,16 +398,11 @@ export class AuditManager {
       try {
         const u = new URL(request.url());
         if (!['http:', 'https:'].includes(u.protocol)) return route.abort('blockedbyclient');
-        if (
-          request.isNavigationRequest() &&
-          request.frame() === request.frame().page().mainFrame() &&
-          !inScope(u.href, scope)
-        ) {
+        const reason = policyReason(request);
+        if (reason) {
           const item = requests.get(request);
-          if (item) item.blocked = 'Tujuan di luar scope navigasi kasus.';
-          warn(
-            'Navigasi di luar scope kasus diblokir. Domain resource hanya dicatat sebagai dependensi.',
-          );
+          if (item) item.blocked = reason;
+          warn(reason);
           return route.abort('blockedbyclient');
         }
         // DNS lookup is not socket pinning; this is still a local developer tool.
@@ -310,9 +411,50 @@ export class AuditManager {
         await checked.get(key);
         if (mode === 'passive' && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
           const item = requests.get(request);
-          if (item) item.blocked = 'Scan pasif: request yang dapat mengubah data tidak dikirim.';
+          if (item)
+            item.blocked =
+              'Kebijakan audit pasif memblokir metode selain GET/HEAD/OPTIONS; metode HTTP bukan bukti bebas efek samping.';
           return route.abort('blockedbyclient');
         }
+        let page;
+        try {
+          page = request.frame().page();
+        } catch {
+          /* Initial popup has no initialized frame yet. */
+        }
+        if (!page || !ensureRedirectGuard.ready(page)) {
+          // A popup's first request precedes Playwright's page/frame event. Do not allow
+          // a redirect chain before its response-stage guard can be installed.
+          let response;
+          job.popupBootstrapRelay = true;
+          try {
+            response = await route.fetch({ maxRedirects: 0, timeout: 25000 });
+            const location = response.headers().location;
+            if ([301, 302, 303, 307, 308].includes(response.status()) && location) {
+              const target = new URL(location, u.href).href;
+              job.redirects ||= [];
+              if (job.redirects.length < 100)
+                job.redirects.push({
+                  from: displayUrl(u.href),
+                  to: displayUrl(target),
+                  status: response.status(),
+                  at: new Date().toISOString(),
+                  outcome: 'blocked',
+                  reason:
+                    'Initial popup redirect blocked before frame initialization; open the intended URL in the audit tab manually.',
+                });
+              warn(
+                'Redirect awal popup diblokir sebelum tab siap diperiksa. Buka URL tujuan yang disetujui pada tab audit secara manual.',
+              );
+              return await route.abort('blockedbyclient');
+            }
+            await route.fulfill({ response });
+          } finally {
+            await response?.dispose();
+          }
+          return;
+        }
+        await ensureRedirectGuard(page);
         await route.continue();
       } catch {
         const item = requests.get(request);
@@ -322,6 +464,10 @@ export class AuditManager {
       }
     });
     context.on('page', (page) => {
+      ensureRedirectGuard(page).catch(() => {
+        warn('Guard redirect tab gagal dipasang; tab ditutup.');
+        page.close().catch(() => {});
+      });
       if (context.pages().length > LIMITS.pages) {
         warn('Batas tab browser tercapai.');
         page.close().catch(() => {});
@@ -331,12 +477,23 @@ export class AuditManager {
       page.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
       page.on('download', (download) => download.cancel().catch(() => {}));
       page.on('request', (request) => {
+        let requestFrame;
+        try {
+          requestFrame = request.frame();
+        } catch {}
+        if (
+          request.isNavigationRequest() &&
+          requestFrame === page.mainFrame() &&
+          !request.redirectedFrom()
+        )
+          epochs.set(page, (epochs.get(page) || 0) + 1);
+        if (controls.canObserve && !controls.canObserve(page, request)) return;
         if (job.requests.length >= 1500) {
           warn('Batas 1500 request tercapai; sebagian request tidak dicatat.');
           return;
         }
         if (!/^https?:/.test(request.url())) return;
-        if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        if (request.isNavigationRequest() && requestFrame === page.mainFrame()) {
           const target = job.pages.find((p) => p.url === displayUrl(request.url()));
           pageIds.set(page, target?.id || `p-${randomUUID().slice(0, 8)}`);
         }
@@ -346,7 +503,7 @@ export class AuditManager {
           .reverse()
           .find(
             (x) =>
-              x.url === displayUrl(request.url()) &&
+              x.sourceKey === catalog.source(request.url()).requestKey &&
               x.method === request.method() &&
               Date.now() - x.at < 2000,
           );
@@ -359,8 +516,16 @@ export class AuditManager {
           pageId: pageIds.get(page),
           pageUrl: displayUrl(request.isNavigationRequest() ? request.url() : page.url()),
           url: displayUrl(request.url()),
+          ...metadata(page),
+          frameId: requestFrame ? frameId(requestFrame) : null,
+          sourceKey: catalog.source(request.url()).requestKey,
+          redirectedFromId: requests.get(request.redirectedFrom())?.id || null,
           method: request.method(),
           resourceType: request.resourceType(),
+          navigation: request.isNavigationRequest(),
+          mainFrame: requestFrame ? requestFrame === page.mainFrame() : null,
+          documentUrl: requestFrame ? displayUrl(requestFrame.url()) : null,
+          requestSecurity: requestSecurityMetadata(null),
           contentType: headers['content-type'] || null,
           queryParameters: [...new Set(new URL(request.url()).searchParams.keys())].slice(0, 100),
           body: summarizeBody(body, headers['content-type'] || ''),
@@ -374,15 +539,65 @@ export class AuditManager {
           evidence: 'Observed browser request',
           blocked: null,
         };
+        entry.parameters = requestParameters(entry);
+        entry.pathParameters = {
+          status: 'unknown',
+          reason: 'Literal URL path is not proof of a route parameter; no route schema acquired',
+        };
         job.requests.push(entry);
         requests.set(request, entry);
+        // request.headers() may omit security-related fields; query this one explicitly,
+        // reduce it to presence immediately, and never retain its value or read cookie state.
+        const pending = this.securityPending.get(job) || new Set();
+        this.securityPending.set(job, pending);
+        const headerTask = request
+          .headerValue('authorization')
+          .then((value) => {
+            entry.requestSecurity = requestSecurityMetadata({ authorization: value });
+          })
+          .catch(() => {})
+          .finally(() => pending.delete(headerTask));
+        pending.add(headerTask);
       });
       page.on('response', (response) => {
         const entry = requests.get(response.request());
         if (entry) {
           entry.status = response.status();
           entry.responseType = response.headers()['content-type'] || null;
+          entry.fromServiceWorker = response.fromServiceWorker();
+          entry.timing = response.request().timing();
           entry.duration = Date.now() - entry.startedAt;
+          entry.durationMeaning = 'until response headers; total timing pending requestfinished';
+          entry.security = {
+            version: 1,
+            status: 'unavailable',
+            reason: 'Header metadata pending at capture boundary',
+          };
+          const pending = this.securityPending.get(job) || new Set();
+          this.securityPending.set(job, pending);
+          const task = response
+            .headersArray()
+            .then((headers) => {
+              entry.security = responseSecurityMetadata(headers);
+            })
+            .catch(() => {
+              entry.security = {
+                version: 1,
+                status: 'unavailable',
+                reason: 'Browser response headers unavailable',
+              };
+            })
+            .finally(() => pending.delete(task));
+          pending.add(task);
+        }
+      });
+      page.on('requestfinished', (request) => {
+        const entry = requests.get(request);
+        if (entry) {
+          entry.timing = request.timing();
+          entry.duration = Date.now() - entry.startedAt;
+          entry.durationMeaning =
+            'collector elapsed until requestfinished; browser timing fields may be -1/unavailable';
         }
       });
       page.on('requestfailed', (request) => {
@@ -390,13 +605,48 @@ export class AuditManager {
         if (entry) {
           entry.failure = request.failure()?.errorText || 'Failed';
           entry.duration = Date.now() - entry.startedAt;
+          if (job.mode === 'authenticated') warn(`Request gagal: ${entry.url} · ${entry.failure}`);
         }
       });
     });
+    // Callers creating a page must await this before issuing its very first navigation.
+    pageIds.prepare = ensureRedirectGuard;
+    pageIds.metadata = metadata;
     return pageIds;
   }
-  async snapshot(page, job, pageIds, mode) {
-    const data = await page.evaluate(extractPage);
+  async snapshot(page, job, pageIds, mode, { guard } = {}) {
+    const initialUrl = page.url();
+    const check = () => {
+      if (guard && (!guard(page.url()) || page.url() !== initialUrl))
+        throw fail(
+          'Halaman berubah atau akses tidak lagi siap selama capture; ulangi setelah konfirmasi.',
+          409,
+        );
+    };
+    check();
+    const captureId = randomUUID();
+    const observedAt = new Date().toISOString();
+    const data = await page.evaluate(extractPage, { captureId });
+    const rawVisuals = await page.evaluate(extractVisuals, { captureId });
+    if (data.documentId !== rawVisuals.documentId)
+      throw fail('Dokumen berubah selama ekstraksi; ulangi capture.', 409);
+    const catalog = this.sourceCatalogs.get(job);
+    data.visuals = sanitizeVisuals(rawVisuals, catalog);
+    for (const owner of data.visuals.owners)
+      if (!data.elements.some((el) => el.id === owner.id))
+        data.elements.push({ ...owner, ordinal: data.elements.length + 1 });
+    data.captureId = captureId;
+    Object.assign(data, pageIds.metadata(page));
+    for (const el of data.elements)
+      Object.assign(el, {
+        captureId,
+        documentId: data.documentId,
+        frameId: data.frameId,
+        pageUrl: displayUrl(page.url()),
+        observedAt,
+        snapshot: captureId,
+      });
+    check();
     const rawUrl = data.url;
     const rawLinks = data.links.map((x) => ({ ...x }));
     data.url = displayUrl(data.url);
@@ -444,21 +694,52 @@ export class AuditManager {
     };
     try {
       screenshotBytes = await page.screenshot({
+        fullPage: true,
+        scale: 'css',
         clip: { x: 0, y: 0, width: data.viewport.width, height },
         timeout: 12000,
         animations: 'disabled',
+        ...(job.mode === 'authenticated'
+          ? {
+              mask: [
+                page.locator(
+                  'input[type="password"],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
+                ),
+              ],
+              maskColor: '#334155',
+            }
+          : {}),
       });
+      check();
+      if ((await page.evaluate(() => window.__wiObserver?.documentId)) !== data.documentId)
+        throw fail('Dokumen berubah selama screenshot; ulangi capture.', 409);
+      // PNG IHDR dimensions are the actual acquisition, not the requested clip size.
+      snapshot.screenshotWidth = screenshotBytes.readUInt32BE(16);
+      snapshot.screenshotHeight = screenshotBytes.readUInt32BE(20);
+      snapshot.screenshotClipped = data.documentHeight > snapshot.screenshotHeight;
       const artifact = this.store.addArtifact(job.caseId, job.id, screenshotBytes, {
         kind: 'screenshot',
-        role: 'original',
+        role: job.mode === 'authenticated' ? 'redacted' : 'original',
         label: screenshotName,
         source: data.url,
         mimeType: 'image/png',
-        method: 'rendered-page-screenshot; animations disabled',
+        method:
+          'rendered-page-screenshot; animations disabled' +
+          (job.mode === 'authenticated'
+            ? '; recognized password/OTP controls masked at acquisition'
+            : ''),
+        ...(job.mode === 'authenticated'
+          ? {
+              redaction:
+                'Password and OTP controls identified by type/autocomplete masked at acquisition. Unmasked original was not acquired. Other visible content may contain sensitive data.',
+            }
+          : {}),
       });
       snapshot.screenshotArtifactId = artifact.id;
       snapshot.screenshot = `/api/cases/${job.caseId}/runs/${job.id}/artifacts/${artifact.id}/content`;
     } catch (error) {
+      check();
+      if (error.message.startsWith('Dokumen berubah')) throw error;
       snapshot.warnings.push(
         `Screenshot tidak tersedia: ${cleanStack(error.message).slice(0, 180)}`,
       );
@@ -490,6 +771,83 @@ export class AuditManager {
       },
     );
     snapshot.extractionArtifactId = extraction.id;
+    // Bounded wait; unresolved headers remain explicitly unavailable in the frozen artifact.
+    let metadataTimer;
+    await Promise.race([
+      Promise.allSettled([...(this.securityPending.get(job) || [])]),
+      new Promise((resolve) => {
+        metadataTimer = setTimeout(resolve, 2000);
+      }),
+    ]);
+    clearTimeout(metadataTimer);
+    const observations = {
+      captureId,
+      documentId: data.documentId,
+      frameId: data.frameId,
+      documentEpoch: data.documentEpoch,
+      requests: job.requests.filter(
+        (r) => r.frameId === data.frameId && r.documentEpoch === data.documentEpoch,
+      ),
+      events: job.events.filter(
+        (e) => e.documentId === data.documentId && e.frameId === data.frameId,
+      ),
+      changes: (job.changes || []).filter(
+        (e) => e.documentId === data.documentId && e.frameId === data.frameId,
+      ),
+      limitations: [
+        'Only this main-frame document epoch; earlier uncollected requests absent',
+        'Parameter values, raw payloads, cookie values and authorization state omitted; selected policy/cookie attributes and Authorization presence only',
+        'Event/request matching by time and URL is correlation only',
+      ],
+    };
+    const observationArtifact = this.store.addArtifact(
+      job.caseId,
+      job.id,
+      JSON.stringify(observations),
+      {
+        kind: 'capture-observations',
+        role: 'extracted',
+        label: `Browser metadata · ${captureId}`,
+        source: data.url,
+        mimeType: 'application/json',
+        method: 'bounded-browser-event-and-request-metadata',
+        redaction: PRIVACY,
+      },
+    );
+    const wiring = buildWiring({
+      caseId: job.caseId,
+      runId: job.id,
+      snapshot,
+      observations,
+      extractionId: extraction.id,
+      observationsId: observationArtifact.id,
+    });
+    const wiringArtifact = this.store.addArtifact(job.caseId, job.id, JSON.stringify(wiring), {
+      kind: 'wiring-graph',
+      role: 'extracted',
+      label: `Wiring · ${captureId}`,
+      source: data.url,
+      mimeType: 'application/json',
+      method: 'evidence-referenced-DOM-asset-request-graph',
+      redaction: PRIVACY,
+      derivedFrom: [extraction.id, observationArtifact.id],
+    });
+    snapshot.wiring = {
+      artifactId: wiringArtifact.id,
+      captureId,
+      assets: wiring.assets.length,
+      nodes: wiring.nodes.length,
+      edges: wiring.edges.length,
+    };
+    snapshot.observationsArtifactId = observationArtifact.id;
+    snapshot.warnings.push(...data.visuals.gaps);
+    this.store.observe(job.caseId, job.id, wiringArtifact.id, {
+      type: 'capture-wiring',
+      pointer: '/',
+      captureId,
+      extractionArtifactId: extraction.id,
+      observationsArtifactId: observationArtifact.id,
+    });
     this.store.observe(job.caseId, job.id, extraction.id, {
       type: 'page-snapshot',
       pointer: '/',
@@ -553,6 +911,7 @@ export class AuditManager {
         if (visited.has(next)) continue;
         visited.add(next);
         const page = await context.newPage();
+        await pageIds.prepare(page);
         job.message = `Memindai ${visited.size}/${job.maxPages}: ${displayUrl(next)}`;
         try {
           const response = await page.goto(next, { waitUntil: 'domcontentloaded', timeout: 25000 });
@@ -626,154 +985,28 @@ export class AuditManager {
       await this.persist(job);
     }
   }
-  async startSession(id, pageId) {
-    const sourceJob = this.jobs.get(id);
-    if (!sourceJob) throw Object.assign(new Error('Audit tidak ditemukan.'), { status: 404 });
-    if (this.sessions.size || this.runners.size || this.sessionOpening)
-      throw Object.assign(new Error('Masih ada audit atau sesi aktif.'), { status: 409 });
-    const target = sourceJob.pages.find((p) => p.id === pageId) || sourceJob.pages[0];
-    if (!target) throw new Error('Belum ada halaman yang bisa direkam.');
-    // Query values were redacted in reports; recordings start on the route without them.
+  async startSession(id, pageId, options = {}) {
+    const source = this.jobs.get(id);
+    if (!source) throw fail('Audit tidak ditemukan.', 404);
+    const target = source.pages.find((p) => p.id === pageId) || source.pages[0];
+    if (!target) throw fail('Belum ada halaman yang bisa direkam.');
     const url = new URL(target.url);
     url.search = '';
     url.hash = '';
-    await validateDestination(url.href, sourceJob.allowLocal);
-    if (this.sessions.size || this.runners.size || this.sessionOpening)
-      throw fail('Masih ada audit/sesi aktif.', 409);
-    const run = this.store.createRun(sourceJob.caseId, {
-      mode: 'record',
+    return this.sessionManager.open({
+      ...options,
+      caseId: source.caseId,
       url: url.href,
-      parentRunId: sourceJob.id,
-      config: { allowLocal: sourceJob.allowLocal, maxPages: 10 },
-    });
-    id = run.id;
-    const job = {
-      id,
-      caseId: sourceJob.caseId,
-      mode: 'record',
-      url: displayUrl(url.href),
-      createdAt: run.started.at,
-      status: 'running',
+      parentRunId: source.id,
+      allowLocal: source.allowLocal,
       maxPages: 10,
-      allowLocal: sourceJob.allowLocal,
-      pages: [],
-      requests: [],
-      events: [],
-      edges: [],
-      warnings: [],
-      message: 'Sesi rekam aktif.',
-      session: null,
-    };
-    this.jobs.set(id, job);
-    let browser;
-    this.sessionOpening = true;
-    try {
-      await this.persist(job);
-      browser = await launchBrowser(false);
-      const context = await browser.newContext({
-        viewport: { width: 1365, height: 900 },
-        serviceWorkers: 'block',
-        acceptDownloads: false,
-      });
-      const pageIds = await this.instrument(context, job, 'record');
-      const page = await context.newPage();
-      pageIds.set(page, target.id);
-      const session = {
-        browser,
-        context,
-        page,
-        pageIds,
-        timer: null,
-        checkpoint: null,
-        captureTask: null,
-      };
-      session.checkpoint = setInterval(() => this.persist(job).catch(() => {}), 5000);
-      this.sessions.set(id, session);
-      job.session = {
-        status: 'opening',
-        startedAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 600000).toISOString(),
-      };
-      await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForTimeout(600);
-      await this.snapshot(page, job, pageIds, 'record');
-      job.session.status = 'recording';
-      session.timer = setTimeout(
-        () => this.stopSession(id, 'Batas waktu sesi rekam 10 menit tercapai.').catch(() => {}),
-        LIMITS.recordMs,
-      );
-      browser.on('disconnected', () => {
-        if (this.sessions.has(id)) {
-          clearTimeout(session.timer);
-          clearInterval(session.checkpoint);
-          this.sessions.delete(id);
-          job.session = null;
-          job.status = 'interrupted';
-          this.finish(job, 'Browser ditutup sebelum sesi diselesaikan.').catch(() => {});
-        }
-      });
-      await this.persist(job);
-      return job;
-    } catch (error) {
-      clearInterval(this.sessions.get(id)?.checkpoint);
-      clearTimeout(this.sessions.get(id)?.timer);
-      this.sessions.delete(id);
-      job.session = null;
-      await browser?.close().catch(() => {});
-      job.status = 'failed';
-      job.message = cleanStack(error.message);
-      await this.finish(job, job.message);
-      throw error;
-    } finally {
-      this.sessionOpening = false;
-    }
+    });
   }
-  async captureSession(id) {
-    const session = this.sessions.get(id),
-      job = this.jobs.get(id);
-    if (!session) throw new Error('Sesi rekam belum aktif.');
-    if (session.captureTask) return session.captureTask;
-    session.captureTask = (async () => {
-      try {
-        const page = session.context
-          .pages()
-          .filter((p) => !p.isClosed())
-          .at(-1);
-        if (!page) throw new Error('Browser rekam sudah ditutup.');
-        await this.snapshot(page, job, session.pageIds, 'record');
-        await this.persist(job);
-        return job;
-      } catch (error) {
-        const warning = `Capture sesi gagal: ${cleanStack(error.message)}`;
-        if (!job.warnings.includes(warning)) job.warnings.push(warning);
-        await this.persist(job);
-        throw error;
-      } finally {
-        session.captureTask = null;
-      }
-    })();
-    return session.captureTask;
+  async captureSession(id, options = {}) {
+    return this.sessionManager.capture(id, options);
   }
   async stopSession(id, reason = null) {
-    const session = this.sessions.get(id),
-      job = this.jobs.get(id);
-    if (!session) return;
-    if (session.stopTask) return session.stopTask;
-    session.stopTask = (async () => {
-      clearTimeout(session.timer);
-      clearInterval(session.checkpoint);
-      await this.captureSession(id).catch(() => {});
-      this.sessions.delete(id);
-      job.session = null;
-      await session.browser.close().catch(() => {});
-      job.status = 'complete';
-      job.message = `${job.pages.length} halaman sesi rekam tersimpan.`;
-      await this.finish(
-        job,
-        reason || (job.warnings.length ? 'Sesi memiliki batas/kegagalan; lihat manifest.' : null),
-      );
-    })();
-    return session.stopTask;
+    return this.sessionManager.stop(id, reason ? 'failed' : 'closed', reason);
   }
 
   async close() {
@@ -781,7 +1014,11 @@ export class AuditManager {
     await Promise.allSettled(
       [...this.runners.keys()]
         .map((id) => this.cancel(id))
-        .concat([...this.sessions.keys()].map((id) => this.stopSession(id))),
+        .concat(
+          [...this.sessions.keys()].map((id) =>
+            this.stopSession(id, 'Server dihentikan; capture terakhir dipertahankan.'),
+          ),
+        ),
     );
     await Promise.allSettled(tasks);
   }

@@ -1,0 +1,2 @@
+# Preserve the exact MIME fixture bytes, including intentional CRLF.
+tests/fixtures/forensics/*.eml -text whitespace=cr-at-eol

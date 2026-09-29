@@ -1,0 +1,25 @@
+From: Synthetic Alice <alice@example.test>
+To: Analyst <analyst@example.test>
+Date: Sat, 10 May 2025 09:00:05 +0700
+Subject: <script>window.__forensicExecuted=true</script> Synthetic export
+Message-ID: <msg42@example.test>
+In-Reply-To: <previous@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="WI-boundary"
+
+--WI-boundary
+Content-Type: text/plain; charset=utf-8
+
+Synthetic link https://portal.example.test/export?token=SECRET_URL
+password=SECRET_EMAIL_BODY
+--WI-boundary
+Content-Type: text/html; charset=utf-8
+
+<script>window.__forensicExecuted=true;fetch('http://127.0.0.1:8792/forensic-trap')</script><img src="http://127.0.0.1:8792/forensic-trap"><a href="javascript:alert(1)">active</a>
+--WI-boundary
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="../../export.txt"
+Content-Transfer-Encoding: base64
+
+U1lOVEhFVElDIGV4cG9ydCA0MgpObyByZWFsIHBlcnNvbmFsIGRhdGEuCg==
+--WI-boundary--

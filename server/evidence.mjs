@@ -4,7 +4,17 @@ import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv }
 import path from 'node:path';
 import { normalizeUrl, displayUrl } from './safety.mjs';
 
-export const COLLECTOR = { name: 'WebIntelligent', version: '1.1.0', schemaVersion: 1 };
+export const COLLECTOR = { name: 'WebIntelligent', version: '1.5.0', schemaVersion: 1 };
+export const OFFLINE_MODES = [
+  'security-assessment',
+  'security-review',
+  'manual-validation',
+  'forensic-import',
+  'forensic-parse',
+  'forensic-operation',
+  'forensic-share',
+];
+export const isOfflineMode = (mode) => OFFLINE_MODES.includes(mode);
 export const LIMITS = {
   artifactBytes: 20 * 1024 * 1024,
   runBytes: 128 * 1024 * 1024,
@@ -15,20 +25,23 @@ export const LIMITS = {
   pages: 10,
   screenshotHeight: 4000,
   runMs: 180000,
-  recordMs: 600000,
 };
 export const PRIVACY = {
   collected: [
     'rendered screenshots (may contain personal data)',
     'selected DOM labels/selectors',
     'request metadata and parameter names/types',
+    'selected response policy summaries and Set-Cookie attributes (no values); Authorization presence only',
+    'bounded visual source declarations, computed choices, CSS rule metadata and resource timings',
+    'DOM mutation structure and SPA history events without changed values or state',
   ],
   omitted: [
     'input values',
     'raw request/response bodies',
     'cookie values',
-    'Authorization headers',
+    'Authorization header values',
     'browser storage',
+    'asset bytes, data URL payloads and blob contents/creation state',
   ],
   redacted: ['URL query values', 'URL credentials', 'URL fragments'],
   note: 'Extracted reports are sanitized at acquisition, not raw network evidence. Visible text, URL paths and screenshots may still contain personal data.',
@@ -306,7 +319,20 @@ export class EvidenceStore {
       scope: c.scope,
       collector: COLLECTOR,
       config: { ...config, limits: LIMITS },
-      privacy: PRIVACY,
+      privacy: mode.startsWith('forensic-')
+        ? {
+            collected: [
+              'Explicit uploaded originals and private offline analysis/analyst declarations; may contain sensitive data',
+            ],
+            omitted: [
+              'No automatic browser/network acquisition, payload expansion, auth-state capture or archive extraction',
+            ],
+            redacted: [
+              'Sharing is a separate strict structural copy; original/private analyses are not sharing reports',
+            ],
+            note: 'Originals encrypted and download-only. Private mapped fields can contain personal data. Baseline hash is not historical authenticity.',
+          }
+        : PRIVACY,
       legacy,
       partialReason: null,
     };
@@ -416,9 +442,10 @@ export class EvidenceStore {
       encrypted: 'AES-256-GCM',
       derivedFrom,
       redaction: options.redaction || 'none applied; may contain sensitive content',
-      baseline: run.legacy
-        ? 'Established at import only; prior integrity unverified'
-        : 'Established at acquisition on this host',
+      baseline:
+        run.legacy || run.mode === 'forensic-import'
+          ? 'Established at import only; prior integrity unverified'
+          : 'Established at acquisition on this host',
     };
     return this.transaction(() => {
       this.db
@@ -509,6 +536,7 @@ export class EvidenceStore {
   }
   seal(job, reason = null) {
     const run = this.getRun(job.caseId, job.id);
+    const offline = isOfflineMode(run.mode);
     if (run.status !== 'running') return run;
     return this.transaction(() => {
       const report = this.addArtifact(job.caseId, job.id, JSON.stringify(job, null, 2), {
@@ -517,15 +545,22 @@ export class EvidenceStore {
         label: 'Laporan ekstraksi tersensor',
         source: run.url,
         mimeType: 'application/json',
-        redaction: PRIVACY,
+        redaction: job.analysis?.privacy || PRIVACY,
         derivedFrom: this.artifacts(job.caseId, job.id)
-          .filter((a) => a.kind === 'page-extraction' || a.kind === 'legacy-report')
+          .filter(
+            (a) =>
+              a.kind === 'page-extraction' ||
+              a.kind === 'legacy-report' ||
+              (offline && OFFLINE_MODES.includes(a.kind)),
+          )
           .map((a) => a.id),
       });
       this.observe(job.caseId, job.id, report.id, {
-        type: 'network-summary',
+        type: offline ? 'offline-analysis-record' : 'network-summary',
         pointer: '/requests',
-        evidence: 'observed browser request metadata; event correlation is not causality',
+        evidence: offline
+          ? 'Offline analysis or analyst declaration; no target requests executed'
+          : 'observed browser request metadata; event correlation is not causality',
         count: job.requests.length,
       });
       const next = {
@@ -552,6 +587,8 @@ export class EvidenceStore {
         schemaVersion: 1,
         run: next,
         scope: run.scope,
+        session: job.sessionInfo || null,
+        redirects: job.redirects || [],
         observedDependencyOrigins: origins,
         coverage: {
           pages: job.pages.map((p) => ({
@@ -562,10 +599,16 @@ export class EvidenceStore {
             truncated: p.truncated,
             screenshotClipped: p.screenshotClipped,
             iframeCount: p.iframeCount,
+            captureId: p.captureId || null,
+            wiring: p.wiring || null,
+            visualCoverage: p.visuals?.coverage || null,
+            visualLimits: p.visuals?.limits || null,
+            visualGaps: p.visuals?.gaps || [],
             warnings: p.warnings,
           })),
           requests: job.requests.length,
           events: job.events.length,
+          changeBatches: job.changes?.length || 0,
         },
         blockedRequests: job.requests
           .filter((r) => r.blocked || r.failure)
@@ -574,9 +617,31 @@ export class EvidenceStore {
         collectorActions: [
           'Browser rendered JavaScript',
           'DOM/event/fetch instrumentation injected',
+          ...(job.pages.some((p) => p.wiring)
+            ? [
+                'Bounded main-frame visual source metadata and DOM/SPA change metadata extracted; asset bytes and response bodies not collected',
+                'Evidence-referenced capture graph derived; time/name matches labelled correlated, backend and actual font fallback unknown',
+                'Preview uses verified screenshot only; no asset refetch',
+              ]
+            : []),
           'Service workers blocked',
+          'HTTP redirect Location checked at Chromium response stage before following each hop',
+          ...(job.popupBootstrapRelay
+            ? [
+                'Initial popup request relayed in the same context with redirects disabled; response disposed after delivery and not stored as evidence',
+              ]
+            : []),
           'Dialogs dismissed and downloads cancelled',
           'Screenshot animations disabled',
+          ...(run.mode === 'authenticated'
+            ? [
+                'User-managed login in an ephemeral isolated browser context',
+                'Content collection gated by explicit start; login metadata observation only if opted in',
+                'Snapshot and selected-URL crawl use the same context; no automatic clicks/forms',
+                'Authentication state not serialized or exported; screenshots may contain personal information',
+                'Recognized password/OTP controls masked at screenshot acquisition; no unmasked screenshot acquired',
+              ]
+            : []),
           ...(run.mode === 'passive'
             ? [
                 'Non-GET/HEAD/OPTIONS requests blocked',
@@ -594,6 +659,13 @@ export class EvidenceStore {
           'Existing local report and referenced screenshots imported without changing originals',
           'Baseline hashes established now; historical collection settings/times not verified',
         ];
+      if (offline) {
+        manifest.collectorActions = job.analysis?.actions || [
+          'Existing evidence verified and read locally; no browser, network test or replay executed',
+          'Separate immutable analysis/review/manual declaration record; baseline artifacts unchanged',
+        ];
+        manifest.analysis = job.analysis;
+      }
       const artifact = this.addArtifact(job.caseId, job.id, JSON.stringify(manifest, null, 2), {
         kind: 'capture-manifest',
         role: 'extracted',

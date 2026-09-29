@@ -1,6 +1,6 @@
 {
   "name": "webintelligent",
-  "version": "1.1.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "description": "Local website navigation, element and request auditor",
@@ -16,7 +16,11 @@
     "smoke": "node tests/smoke.mjs",
     "browser:install": "playwright install chromium",
     "format": "prettier --write src server tests public vite.config.js index.html README.md",
-    "smoke:stage1": "node tests/stage1-smoke.mjs"
+    "smoke:stage1": "node tests/stage1-smoke.mjs",
+    "smoke:stage2": "node tests/stage2-smoke.mjs",
+    "smoke:stage3": "node tests/stage3-smoke.mjs",
+    "smoke:stage4": "node tests/stage4-smoke.mjs",
+    "smoke:stage5": "node tests/stage5-smoke.mjs"
   },
   "dependencies": {
     "@xyflow/react": "12.12.0",

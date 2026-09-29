@@ -1,0 +1,5 @@
+when,operation,principal,client,request,link
+2025-05-10T02:00:00Z,"export, accepted",alice@example.test,198.51.100.24,req-42,https://portal.example.test/export
+2025-05-10T02:00:02Z,"two
+lines",bob@example.test,198.51.100.24,req-99,https://unrelated.example.test/
+,"=WEBSERVICE(""http://127.0.0.1:8792/forensic-trap"")",mallory@example.test,203.0.113.9,req-100,https://unrelated.example.test/

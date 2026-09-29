@@ -2,7 +2,17 @@
 export function installObserver() {
   const original = EventTarget.prototype.addEventListener;
   const registry = new WeakMap();
-  const state = { registry, lastEvent: null };
+  const uid = () =>
+    [...crypto.getRandomValues(new Uint8Array(16))]
+      .map((x) => x.toString(16).padStart(2, '0'))
+      .join('');
+  const identities = new WeakMap();
+  let sequence = 0;
+  const identity = (el) => {
+    if (!identities.has(el)) identities.set(el, `n${++sequence}`);
+    return identities.get(el);
+  };
+  const state = { registry, lastEvent: null, documentId: uid(), identity };
   Object.defineProperty(window, '__wiObserver', { value: state, configurable: true });
   const selector = (el) => {
     if (!(el instanceof Element)) return el === document ? 'document' : 'window';
@@ -22,7 +32,7 @@ export function installObserver() {
   state.selector = selector;
   const emit = (data) => {
     try {
-      window.__wiReport?.(data).catch(() => {});
+      window.__wiReport?.({ ...data, documentId: state.documentId }).catch(() => {});
     } catch {}
   };
   EventTarget.prototype.addEventListener = function (type, handler, options) {
@@ -47,7 +57,9 @@ export function installObserver() {
         if (!(el instanceof Element)) return;
         const data = {
           kind: 'event',
-          id: crypto.randomUUID(),
+          id: uid(),
+          domNodeId: identity(el),
+          formNodeId: el.form ? identity(el.form) : null,
           event: type,
           selector: selector(el),
           name: el.getAttribute('name') || '',
@@ -91,9 +103,54 @@ export function installObserver() {
     if (m) reportCall(m.url, m.method, 'XMLHttpRequest');
     return Reflect.apply(send, this, arguments);
   };
+  // Structural metadata only: never serialize changed text, attributes, or form values.
+  let mutationCount = 0,
+    pending = [],
+    timer;
+  new MutationObserver((records) => {
+    mutationCount += records.length;
+    for (const record of records.slice(0, 20)) {
+      if (pending.length >= 20) break;
+      const el = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (el)
+        pending.push({
+          domNodeId: identity(el),
+          selector: selector(el),
+          type: record.type,
+          attribute: record.attributeName,
+          added: record.addedNodes.length,
+          removed: record.removedNodes.length,
+        });
+    }
+    if (!timer)
+      timer = setTimeout(() => {
+        emit({
+          kind: 'change',
+          type: 'DOM mutation batch',
+          changes: pending,
+          count: mutationCount,
+          time: Date.now(),
+        });
+        pending = [];
+        mutationCount = 0;
+        timer = null;
+      }, 250);
+  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  for (const method of ['pushState', 'replaceState']) {
+    const real = history[method];
+    history[method] = function () {
+      const result = Reflect.apply(real, this, arguments);
+      emit({ kind: 'change', type: method, url: location.href, time: Date.now() });
+      return result;
+    };
+  }
+  for (const type of ['popstate', 'hashchange'])
+    original.call(window, type, () =>
+      emit({ kind: 'change', type, url: location.href, time: Date.now() }),
+    );
 }
 
-export function extractPage() {
+export function extractPage({ captureId } = {}) {
   const observer = window.__wiObserver;
   const selector =
     observer?.selector || ((el) => (el.id ? `#${CSS.escape(el.id)}` : el.tagName.toLowerCase()));
@@ -125,7 +182,7 @@ export function extractPage() {
   }));
   const candidates = [
     ...document.querySelectorAll(
-      'a[href],input:not([type="hidden"]),textarea,select,button,[role="button"],[role="link"],[contenteditable="true"]',
+      'form,a[href],input:not([type="hidden"]),textarea,select,button,[role="button"],[role="link"],[contenteditable="true"]',
     ),
   ].filter(visible);
   const elements = candidates.slice(0, 250).map((el, index) => {
@@ -135,7 +192,11 @@ export function extractPage() {
     const label = text(
       el.getAttribute('aria-label') ||
         el.labels?.[0]?.textContent ||
-        (isField ? el.name || el.getAttribute('placeholder') : el.textContent) ||
+        (el.tagName === 'FORM'
+          ? `Form ${el.name || el.id || selector(el)}`
+          : isField
+            ? el.name || el.getAttribute('placeholder')
+            : el.textContent) ||
         el.getAttribute('title') ||
         type,
     );
@@ -165,9 +226,16 @@ export function extractPage() {
         })),
       )
       .slice(0, 16);
-    const form = el.form ? forms.find((f) => f.selector === selector(el.form)) : null;
+    const form =
+      el.tagName === 'FORM'
+        ? forms.find((f) => f.selector === selector(el))
+        : el.form
+          ? forms.find((f) => f.selector === selector(el.form))
+          : null;
     return {
-      id: `e${index + 1}`,
+      id: captureId ? `${captureId}:el:${observer.identity(el)}` : `e${index + 1}`,
+      ordinal: index + 1,
+      domNodeId: observer?.identity(el) || null,
       selector: selector(el),
       tag: el.tagName.toLowerCase(),
       type,
@@ -194,6 +262,7 @@ export function extractPage() {
     };
   });
   return {
+    documentId: observer?.documentId || null,
     title: document.title,
     url: location.href,
     elements,

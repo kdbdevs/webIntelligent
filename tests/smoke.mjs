@@ -44,16 +44,18 @@ try {
   );
 
   // Use the real recording lifecycle on our own local fixture.
-  const recordJob = await manager.startSession(job.id, login.id);
+  const recordJob = await manager.startSession(job.id, login.id, { observeLogin: true });
   assert.notEqual(recordJob.id, job.id, 'recording has a separate evidence run');
   assert.equal(recordJob.caseId, job.caseId);
   const session = manager.sessions.get(recordJob.id);
+  await session.openTask;
   browser = session.browser;
   const demo = session.page;
   await demo.locator('#email').fill('demo@example.com');
   await demo.locator('#password').fill('demo');
   await Promise.all([demo.waitForURL('**/demo/dashboard'), demo.locator('#login-button').click()]);
   await demo.waitForTimeout(400);
+  manager.sessionManager.ready(recordJob.id);
   await manager.captureSession(recordJob.id);
   const loginRequest = recordJob.requests.find(
     (r) => r.url.endsWith('/demo/api/login') && r.method === 'POST',

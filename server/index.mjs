@@ -4,6 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { AuditManager } from './audit.mjs';
+import { createAuthFixture } from './auth-fixture.mjs';
+import { createWiringFixture } from './wiring-fixture.mjs';
+import { SecurityService } from './security.mjs';
+import { createSecurityFixture } from './security-fixture.mjs';
+import { ForensicService } from './forensics.mjs';
+import { FORENSIC_LIMITS } from './forensic-parsers.mjs';
 
 process.umask(0o077);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,12 +40,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '16kb' }));
 const manager = new AuditManager(process.env.DATA_DIR || path.join(root, '.data'));
 await manager.init();
+const security = new SecurityService(manager.store);
+const forensics = new ForensicService(manager.store);
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 app.get('/api/health', (req, res) =>
   res.json({
     ok: true,
     name: 'Web Intelligent',
-    version: '1.1.0',
+    version: '1.5.0',
     migrationWarnings: manager.migrationWarnings,
   }),
 );
@@ -59,6 +67,95 @@ app.get('/api/cases/:caseId/custody', (req, res) =>
     events: manager.store.events(req.params.caseId),
     chainVerified: manager.store.custodyIntegrity(req.params.caseId),
   }),
+);
+app.post(
+  '/api/cases/:caseId/forensics/import',
+  (req, res, next) => {
+    manager.store.getCase(req.params.caseId);
+    const timer = setTimeout(() => {
+      forensics.reject(req.params.caseId, 'Upload timeout');
+      req.destroy();
+    }, 10000);
+    res.once('close', () => clearTimeout(timer));
+    express.raw({
+      type: 'application/octet-stream',
+      limit: FORENSIC_LIMITS.inputBytes,
+      inflate: false,
+    })(req, res, (error) => {
+      clearTimeout(timer);
+      if (error) {
+        forensics.reject(req.params.caseId, error.type || 'Upload rejected');
+        return next(error);
+      }
+      next();
+    });
+  },
+  asyncRoute(async (req, res) => {
+    let options;
+    try {
+      const header = req.get('X-WI-Import-Options') || '{}';
+      options = JSON.parse(header.startsWith('{') ? header : decodeURIComponent(header));
+    } catch {
+      forensics.reject(req.params.caseId, 'Invalid import options');
+      return res.status(400).json({ error: 'Header opsi impor tidak valid.' });
+    }
+    res.status(201).json(await forensics.import(req.params.caseId, req.body, options));
+  }),
+);
+app.get('/api/cases/:caseId/forensics', (req, res) =>
+  res.json(
+    forensics.view(req.params.caseId, { sourceId: req.query.source, version: req.query.version }),
+  ),
+);
+app.post(
+  '/api/cases/:caseId/forensics/captures/:runId',
+  asyncRoute(async (req, res) =>
+    res.status(201).json(await forensics.addCapture(req.params.caseId, req.params.runId)),
+  ),
+);
+app.post(
+  '/api/cases/:caseId/forensics/sources/:sourceId/reparse',
+  asyncRoute(async (req, res) =>
+    res
+      .status(201)
+      .json(await forensics.reparse(req.params.caseId, req.params.sourceId, req.body || {})),
+  ),
+);
+app.get('/api/cases/:caseId/forensics/sources/:sourceId/preview', (req, res) =>
+  res.json(forensics.preview(req.params.caseId, req.params.sourceId, req.query.version)),
+);
+app.post('/api/cases/:caseId/forensics/operations', (req, res) =>
+  res.status(201).json(forensics.operation(req.params.caseId, req.body || {})),
+);
+app.post('/api/cases/:caseId/forensics/share', (req, res) =>
+  res.status(201).json(forensics.share(req.params.caseId, req.body || {})),
+);
+app.get('/api/cases/:caseId/runs/:runId/security/assessments', (req, res) =>
+  res.json(security.list(req.params.caseId, req.params.runId)),
+);
+app.post('/api/cases/:caseId/runs/:runId/security/assessments', (req, res) =>
+  res.status(201).json(security.assess(req.params.caseId, req.params.runId, req.body || {})),
+);
+app.get('/api/cases/:caseId/security/assessments/:id', (req, res) =>
+  res.json(security.get(req.params.caseId, req.params.id)),
+);
+app.post('/api/cases/:caseId/security/assessments/:id/findings/:findingId/reviews', (req, res) =>
+  res
+    .status(201)
+    .json(security.review(req.params.caseId, req.params.id, req.params.findingId, req.body || {})),
+);
+app.post('/api/cases/:caseId/security/assessments/:id/manual-tests', (req, res) =>
+  res.status(201).json(security.plan(req.params.caseId, req.params.id, req.body || {})),
+);
+app.post('/api/cases/:caseId/security/assessments/:id/manual-tests/:testId/results', (req, res) =>
+  res
+    .status(201)
+    .json(security.testResult(req.params.caseId, req.params.id, req.params.testId, req.body || {})),
+);
+app.get('/api/cases/:caseId/security/assessments/:id/export', (req, res) =>
+  res
+    .attachment(`security-${req.params.id}.json`)
+    .json(security.export(req.params.caseId, req.params.id)),
 );
 app.get('/api/cases/:caseId/runs/:runId', (req, res) => {
   const { caseId, runId } = req.params;
@@ -87,6 +184,11 @@ app.get('/api/cases/:caseId/runs/:runId/artifacts/:artifactId/content', (req, re
   const artifact = manager.store.artifact(caseId, runId, artifactId);
   const content = manager.store.readArtifact(caseId, runId, artifactId);
   res.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  if (artifact.kind === 'forensic-original')
+    return res
+      .attachment(`original-${artifact.id}.bin`)
+      .type('application/octet-stream')
+      .send(content);
   res.type(artifact.mimeType).send(content);
 });
 app.get('/api/audits', (req, res) => {
@@ -101,7 +203,7 @@ app.post(
   }),
 );
 app.get('/api/audits/:id', (req, res) => {
-  const job = manager.jobs.get(req.params.id);
+  const job = manager.sessionManager.refresh(req.params.id);
   if (!job) return res.status(404).json({ error: 'Audit tidak ditemukan.' });
   res.json(job);
 });
@@ -159,7 +261,44 @@ app.post(
     res.json(manager.jobs.get(req.params.id));
   }),
 );
+app.post(
+  '/api/sessions',
+  asyncRoute(async (req, res) =>
+    res.status(202).json(await manager.sessionManager.open(req.body || {})),
+  ),
+);
+app.get('/api/sessions/:id', (req, res) => {
+  const job = manager.sessionManager.refresh(req.params.id);
+  if (!job || job.mode !== 'authenticated')
+    return res.status(404).json({ error: 'Sesi tidak ditemukan.' });
+  res.json(job);
+});
+for (const action of ['ready', 'pause', 'extend', 'auth-lost', 'select', 'capture', 'close']) {
+  app.post(
+    `/api/sessions/:id/${action}`,
+    asyncRoute(async (req, res) => {
+      const id = req.params.id,
+        sessions = manager.sessionManager;
+      const result =
+        action === 'select'
+          ? sessions.select(id, req.body?.tabId)
+          : action === 'capture'
+            ? await sessions.capture(id, req.body || {})
+            : action === 'close'
+              ? await sessions.stop(id)
+              : action === 'auth-lost'
+                ? sessions.markExpired(id)
+                : sessions[action](id);
+      res.json(result);
+    }),
+  );
+}
 app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak ditemukan.' }));
+
+if (process.env.ENABLE_AUTH_FIXTURE === '1') app.use('/auth-fixture', createAuthFixture());
+if (process.env.ENABLE_WIRING_FIXTURE === '1') app.use('/wiring-fixture', createWiringFixture());
+if (process.env.ENABLE_SECURITY_FIXTURE === '1')
+  app.use('/security-fixture', createSecurityFixture());
 
 // A deliberately local fixture to try navigation and real POST recording without an account.
 app.get('/demo/api/status', (req, res) => res.json({ available: true }));
@@ -247,3 +386,6 @@ for (const signal of ['SIGINT', 'SIGTERM'])
     });
     setTimeout(() => process.exit(0), 3000).unref();
   });
+
+// Internal handles for isolated end-to-end tests; no browser-control HTTP endpoint.
+export { app, server, manager };
