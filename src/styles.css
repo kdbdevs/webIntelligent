@@ -2936,3 +2936,120 @@ pre {
     padding: 12px;
   }
 }
+
+/* Case reporting preserves the existing audit workspace. */
+.report-workspace {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.report-workspace fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.report-workspace details {
+  margin: 16px 0;
+}
+.report-workspace summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.report-workspace label {
+  display: block;
+  margin: 10px 0;
+}
+.report-workspace input:not([type='checkbox']),
+.report-workspace select,
+.report-workspace textarea {
+  width: 100%;
+  padding: 9px;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.report-workspace input[type='checkbox'] {
+  margin-right: 8px;
+}
+.report-workspace button {
+  margin: 4px;
+  padding: 7px 10px;
+}
+.report-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.report-scroll {
+  max-height: 330px;
+  overflow: auto;
+}
+.report-card {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.report-refs {
+  display: block;
+}
+.report-refs button {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  text-align: left;
+}
+.report-workspace pre {
+  max-height: 350px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  padding: 12px;
+  background: var(--mint);
+}
+.report-workspace code {
+  overflow-wrap: anywhere;
+}
+.report-preview {
+  margin: 18px 0;
+  border-top: 2px solid #28bdb0;
+  padding-top: 12px;
+}
+.report-review,
+.report-evidence {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+.report-workspace a {
+  color: var(--green);
+  margin: 10px;
+  display: inline-block;
+}
+@media (max-width: 700px) {
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.report-workspace p {
+  margin: 8px 0;
+  line-height: 1.55;
+}
+.report-workspace summary {
+  color: var(--green);
+}
+.report-workspace h4 {
+  margin: 20px 0 10px;
+}
+.report-workspace button:not(.ghost) {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--mint);
+  color: var(--green);
+}

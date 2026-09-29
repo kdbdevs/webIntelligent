@@ -2,7 +2,19 @@ import { useEffect, useState, useId } from 'react';
 import { evidenceApi as api } from './CaseEvidence';
 import { WiringExplorer } from './WiringExplorer';
 
-const offline = ['security-assessment', 'security-review', 'manual-validation', 'forensic-import', 'forensic-parse', 'forensic-operation', 'forensic-share'];
+const offline = [
+  'security-assessment',
+  'security-review',
+  'manual-validation',
+  'forensic-import',
+  'forensic-parse',
+  'forensic-operation',
+  'forensic-share',
+  'case-report',
+  'capture-comparison',
+  'analysis-assistant',
+  'report-export',
+];
 const root = (job) => `/api/cases/${job.caseId}`;
 const assessmentUrl = (job, id) => `${root(job)}/security/assessments/${id}`;
 const refUrl = (r) => `/api/cases/${r.caseId}/runs/${r.runId}/artifacts/${r.artifactId}`;

@@ -2,6 +2,9 @@ import { CaseManager, EvidencePanel } from './CaseEvidence';
 import { AuthSession } from './AuthSession';
 import { WiringExplorer } from './WiringExplorer';
 import { SecurityFindings } from './SecurityFindings';
+const ReportWorkspace = React.lazy(() =>
+  import('./ReportWorkspace').then((m) => ({ default: m.ReportWorkspace })),
+);
 const ForensicWorkspace = React.lazy(() =>
   import('./ForensicWorkspace').then((m) => ({ default: m.ForensicWorkspace })),
 );
@@ -940,7 +943,7 @@ export default function App() {
             <span /> Berjalan lokal
           </div>
           <p>Data audit tersimpan di komputer ini.</p>
-          <code>v1.5 / Case Forensics</code>
+          <code>v1.6 / Case Reports</code>
         </div>
       </aside>
       <main className="main">
@@ -992,6 +995,14 @@ export default function App() {
         <React.Suspense fallback={<p>Memuat workspace forensik…</p>}>
           <ForensicWorkspace
             key={caseId || 'no-case'}
+            caseId={caseId}
+            operator={cases.find((c) => c.id === caseId)?.operator}
+            disabled={pending || isRunning || recording}
+          />
+        </React.Suspense>
+        <React.Suspense fallback={<p>Memuat pelaporan…</p>}>
+          <ReportWorkspace
+            key={caseId || 'report-no-case'}
             caseId={caseId}
             operator={cases.find((c) => c.id === caseId)?.operator}
             disabled={pending || isRunning || recording}

@@ -8,6 +8,12 @@ import { createAuthFixture } from './auth-fixture.mjs';
 import { createWiringFixture } from './wiring-fixture.mjs';
 import { SecurityService } from './security.mjs';
 import { createSecurityFixture } from './security-fixture.mjs';
+import { ReportService } from './reporting.mjs';
+import { compareCaptures } from './capture-comparison.mjs';
+import { exportReport } from './report-export.mjs';
+import { AnalysisAssistant } from './analysis-assistant.mjs';
+import { loadRecord } from './report-common.mjs';
+import { readFile } from 'node:fs/promises';
 import { ForensicService } from './forensics.mjs';
 import { FORENSIC_LIMITS } from './forensic-parsers.mjs';
 
@@ -42,12 +48,14 @@ const manager = new AuditManager(process.env.DATA_DIR || path.join(root, '.data'
 await manager.init();
 const security = new SecurityService(manager.store);
 const forensics = new ForensicService(manager.store);
+const reports = new ReportService(manager.store);
+const assistant = new AnalysisAssistant(manager.store);
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 app.get('/api/health', (req, res) =>
   res.json({
     ok: true,
     name: 'Web Intelligent',
-    version: '1.5.0',
+    version: '1.6.0',
     migrationWarnings: manager.migrationWarnings,
   }),
 );
@@ -191,6 +199,53 @@ app.get('/api/cases/:caseId/runs/:runId/artifacts/:artifactId/content', (req, re
       .send(content);
   res.type(artifact.mimeType).send(content);
 });
+app.get('/api/cases/:caseId/reporting', (req, res) => res.json(reports.catalog(req.params.caseId)));
+app.post('/api/cases/:caseId/reports', (req, res) =>
+  res.status(201).json(reports.build(req.params.caseId, req.body)),
+);
+app.get('/api/cases/:caseId/reports/:id', (req, res) =>
+  res.json(reports.get(req.params.caseId, req.params.id)),
+);
+app.post('/api/cases/:caseId/reports/:id/finalize', (req, res) =>
+  res.status(201).json(reports.finalize(req.params.caseId, req.params.id, req.body)),
+);
+app.post(
+  '/api/cases/:caseId/reports/:id/export',
+  asyncRoute(async (req, res) =>
+    res.json(await exportReport(manager.store, req.params.caseId, req.params.id, req.body)),
+  ),
+);
+app.post('/api/cases/:caseId/reporting/evidence', (req, res) =>
+  res.json(reports.evidence(req.params.caseId, req.body)),
+);
+app.post('/api/cases/:caseId/comparisons', (req, res) =>
+  res.status(201).json(compareCaptures(manager.store, req.params.caseId, req.body)),
+);
+app.get('/api/cases/:caseId/comparisons/:id', (req, res) =>
+  res.json(loadRecord(manager.store, req.params.caseId, req.params.id, 'capture-comparison')),
+);
+app.get('/api/assistant/config', (req, res) => res.json(assistant.configView()));
+app.post('/api/cases/:caseId/reports/:id/assistant/local', (req, res) =>
+  res.json(assistant.local(req.params.caseId, req.params.id, req.body)),
+);
+app.post('/api/cases/:caseId/reports/:id/assistant/prepare', (req, res) =>
+  res.json(assistant.prepare(req.params.caseId, req.params.id, req.body)),
+);
+app.post(
+  '/api/cases/:caseId/assistant/plans/:id/execute',
+  asyncRoute(async (req, res) =>
+    res.json(await assistant.execute(req.params.caseId, req.params.id, req.body)),
+  ),
+);
+app.get(
+  '/api/report-verifier',
+  asyncRoute(async (req, res) => {
+    res
+      .set('Content-Disposition', 'attachment; filename="verify-package.mjs"')
+      .type('text/plain')
+      .send(await readFile(new URL('../tools/verify-package.mjs', import.meta.url), 'utf8'));
+  }),
+);
 app.get('/api/audits', (req, res) => {
   if (req.query.caseId) manager.store.getCase(req.query.caseId);
   res.json(manager.list().filter((job) => !req.query.caseId || job.caseId === req.query.caseId));

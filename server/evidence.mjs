@@ -4,7 +4,7 @@ import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv }
 import path from 'node:path';
 import { normalizeUrl, displayUrl } from './safety.mjs';
 
-export const COLLECTOR = { name: 'WebIntelligent', version: '1.5.0', schemaVersion: 1 };
+export const COLLECTOR = { name: 'WebIntelligent', version: '1.6.0', schemaVersion: 1 };
 export const OFFLINE_MODES = [
   'security-assessment',
   'security-review',
@@ -13,6 +13,10 @@ export const OFFLINE_MODES = [
   'forensic-parse',
   'forensic-operation',
   'forensic-share',
+  'case-report',
+  'capture-comparison',
+  'analysis-assistant',
+  'report-export',
 ];
 export const isOfflineMode = (mode) => OFFLINE_MODES.includes(mode);
 export const LIMITS = {
@@ -319,20 +323,39 @@ export class EvidenceStore {
       scope: c.scope,
       collector: COLLECTOR,
       config: { ...config, limits: LIMITS },
-      privacy: mode.startsWith('forensic-')
+      privacy: [
+        'case-report',
+        'capture-comparison',
+        'analysis-assistant',
+        'report-export',
+      ].includes(mode)
         ? {
             collected: [
-              'Explicit uploaded originals and private offline analysis/analyst declarations; may contain sensitive data',
+              'Selected case analysis snapshots, report versions, comparisons, approved assistant context/results, explicit export bytes',
             ],
             omitted: [
-              'No automatic browser/network acquisition, payload expansion, auth-state capture or archive extraction',
+              'No new target capture, active tests, browser-state serialization or automatic remote artifact fetch',
             ],
             redacted: [
-              'Sharing is a separate strict structural copy; original/private analyses are not sharing reports',
+              'Shared reports use a structural allowlist; analyst sharing narrative is explicitly approved',
+              'Sensitive originals only through explicit individually selected encrypted packages; export key stored separately',
             ],
-            note: 'Originals encrypted and download-only. Private mapped fields can contain personal data. Baseline hash is not historical authenticity.',
+            note: 'Private analysis stays encrypted locally. External model transport requires per-request context approval; provider retention is separate from local storage.',
           }
-        : PRIVACY,
+        : mode.startsWith('forensic-')
+          ? {
+              collected: [
+                'Explicit uploaded originals and private offline analysis/analyst declarations; may contain sensitive data',
+              ],
+              omitted: [
+                'No automatic browser/network acquisition, payload expansion, auth-state capture or archive extraction',
+              ],
+              redacted: [
+                'Sharing is a separate strict structural copy; original/private analyses are not sharing reports',
+              ],
+              note: 'Originals encrypted and download-only. Private mapped fields can contain personal data. Baseline hash is not historical authenticity.',
+            }
+          : PRIVACY,
       legacy,
       partialReason: null,
     };

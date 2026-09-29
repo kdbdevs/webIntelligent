@@ -4,7 +4,7 @@ App lokal untuk memetakan website dari URL: screenshot dengan penanda elemen, wi
 
 ## Jalankan
 
-Gunakan Node **22.16+ pada seri 22, atau 24+**. Versi 1.5 memakai `node:sqlite` bawaan Node; tidak ada dependency npm baru. Pengujian pengembangan dilakukan pada Node 26.0.0.
+Gunakan Node **22.16+ pada seri 22, atau 24+**. Versi 1.6 memakai `node:sqlite` bawaan Node; tidak ada dependency npm baru. Pengujian pengembangan dilakukan pada Node 26.0.0.
 
 ```sh
 npm install
@@ -35,6 +35,41 @@ Port berbeda: `PORT=8788 npm start`. Data kasus dan artefak disimpan di `.data/e
 8. Setelah run selesai, **Pemeriksaan keamanan → Analisis bukti** menjalankan tujuh rule pasif atas artefak terverifikasi. Pilih finding → **Tinjau bukti request** / **Buka wiring** → pilih bukti pendukung atau penyangkal → **Review manual**. **Ekspor security + manifest** menyertakan assessment, keputusan, skenario, dan manifest run terkait. Capture lama yang belum merekam metadata header tetap dapat dianalisis dengan hasil **not-assessed** untuk input yang belum tersedia.
 
 **Audit demo** menyediakan form demonstrasi request dan endpoint lokal. Akun demo: `demo@example.com`, password `demo`. Tombol demo mengaktifkan izin localhost. Demo lama tidak melindungi halaman memakai cookie. Untuk menguji autentikasi sungguhan gunakan fixture cookie tahap 2 di bawah.
+
+## Pelaporan kasus — tahap 6
+
+Pilih kasus → **Laporan, perbandingan & asisten** → muat ulang sumber → pilih versi artefak (maksimal 12) → **Buat draft**. Sumber yang tersedia: capture `run-report` atau snapshot `page-extraction`, versi `forensic-parse`, assessment keamanan, perbandingan tersimpan, dan hasil asisten yang referensinya lolos validasi. Tidak ada data simulasi yang ditambahkan ke kasus nyata. Dataset tes diberi label sintetis.
+
+Draft membekukan tujuan/scope kasus, metode/versi, waktu, coverage, timeline, observasi, korelasi, hipotesis dan status temuan hasil review manusia. Tombol **Bukti** memverifikasi hash dan membuka JSON pointer sumber sebagai teks. Isi website/email/log tidak dieksekusi. Rekomendasi dan detail temuan privat tersedia dalam panel. Perubahan parsing/review/koreksi jam setelah draft dibuat tidak mengubah snapshot lama. Isi peninjau, alasan, dan konfirmasi review untuk **Tandai final sebagai versi baru**. Status final laporan tidak otomatis memvalidasi temuan di dalamnya.
+
+**JSON / HTML / PDF / Paket + manifest** membuat artefak ekspor baru. Default memakai proyeksi struktural tersensor: teks sumber privat, nama file, URL, identitas, nilai field, catatan analis, screenshot dan asli tidak disertakan. ID/hash/waktu tetap dapat menghubungkan catatan; tersensor bukan anonim. Isi **Narasi yang boleh dibagikan** bila membutuhkan judul, tujuan, scope, rekomendasi dan identitas peninjau yang sudah diseleksi sendiri; centang persetujuannya sebelum membuat versi draft baru. Narasi ini adalah pernyataan analis dan harus diperiksa lagi sebelum berbagi.
+
+Paket `.wipkg.json` adalah kontainer JSON/base64, bukan ZIP dan tidak mengekstrak atau mengeksekusi file. Manifest mencatat hash/ukuran tiap file yang disertakan dan lineage ke sumber. Referensi hash ke asli yang tidak disertakan hanya baseline; verifier tidak memverifikasi bytes yang tidak ada di paket. **Ekspor asli sensitif** memerlukan pilihan ID sumber laporan satu per satu dan checkbox eksplisit. Paket kemudian dienkripsi AES-256-GCM dengan kunci acak sekali ekspor, berbeda dari kunci penyimpanan aplikasi. Simpan unduhan kunci terpisah sebelum meninggalkan hasil ekspor; kunci tidak disimpan dalam laporan dan tidak dapat dipulihkan dari paket. Collector tidak menyimpan atau mengekspor state login. File impor asli bisa mengandung secret dan hanya ikut jika sengaja dipilih melalui jalur terenkripsi.
+
+Unduh verifier lokal dari UI atau gunakan salinan tepercaya `tools/verify-package.mjs`:
+
+```sh
+node tools/verify-package.mjs paket.wipkg.json
+node tools/verify-package.mjs paket.encrypted.wipkg.json --key-file export.key
+# Bandingkan juga dengan digest yang disimpan melalui saluran tepercaya:
+node tools/verify-package.mjs paket.wipkg.json --expected-sha256 DIGEST_YANG_DISIMPAN
+```
+
+**Bandingkan dua capture** membandingkan metadata halaman, selector/elemen, sumber aset, domain, endpoint/method, parameter dan assessment terakhir per run. Hasil: `newly-observed`, `not-observed-in-B`, `metadata-changed`, atau `same-observed-metadata`. Konteks identitas yang dinyatakan analis, scope/halaman, konfigurasi dan request gagal tersedia di panel. Tidak terlihat bukan bukti penghapusan/perbaikan; identitas berdasarkan deklarasi bukan verifikasi. URL tersensor/query dan selector berulang membuat pencocokan heuristik. Data/blob/inline tidak digabung hanya karena ID mirip. Tidak ada klaim byte aset/respons identik karena bytes tersebut tidak diarsipkan.
+
+**Analisis lokal tanpa AI** menyediakan pencarian teks, ringkasan fakta, relasi dan bahan draft dengan referensi yang bisa dibuka. Graph/timeline forensik tahap 5 tetap tersedia. AI opsional hanya membantu memilih/mengurutkan fakta yang sudah ada dan mengutip field yang persis cocok; bukan chat bebas, penentu validasi, alat uji aktif atau atribusi pelaku.
+
+Provider bawaan: `none` (default) atau `openai`. Set `WI_AI_PROVIDER=openai`, `WI_AI_MODEL` ke model yang mendukung Chat Completions JSON mode, dan `OPENAI_API_KEY` dalam environment proses di luar repo/laporan, lalu restart server. App tidak otomatis membaca `.env`. Tanpa konfigurasi, semua fitur inti tetap berjalan. Di UI: jalankan analisis lokal → pilih fakta → aktifkan pengiriman → opsional kutipan → **Pratinjau konteks sebelum kirim** → baca system instruction, query dan seluruh fakta/kutipan → setujui pengiriman. Pratinjau belum menghubungi provider. Tiap persetujuan terikat hash konteks/model/template, berlaku 10 menit dan sekali percobaan. Tidak ada callable tool. Respons dengan ID palsu, kutipan buatan, prose tambahan atau tool call ditolak. Hasil yang diterima dapat dipilih sebagai sumber draft baru dan tetap perlu review manusia.
+
+Hanya query, fakta struktural dan kutipan yang disetujui dikirim; kutipan dapat memuat PII atau prompt injection sebagai **data**. Filter pola secret adalah bantuan terbatas, bukan jaminan anonimisasi; baca preview. Endpoint OpenAI tetap, redirect ditolak, `store:false`, tanpa retry otomatis. `store:false` **bukan** janji zero retention: periksa [kebijakan data provider](https://developers.openai.com/api/docs/guides/your-data). Pengujian integrasi model nyata belum dilakukan; mock deterministik dipakai untuk pengujian referensi/consent/injection. API key hanya digunakan untuk autentikasi provider.
+
+```sh
+npm run check
+npm run smoke:stage6 # data/kunci sementara; loopback dan artefak sintetis
+npm run verify:package -- paket.wipkg.json
+```
+
+Batas dan catatan kesiapan rilis ada di [handoff tahap 6](docs/handoff-stage-6.md). Tidak ada database/dependency baru, migrasi destruktif, deploy, atau klaim forensic-ready/production-ready. Verifikasi hash lokal bukan autentisitas, waktu tepercaya, perlindungan administrator host, ataupun pemenuhan pembuktian hukum.
 
 ## Forensik kasus — tahap 5
 
