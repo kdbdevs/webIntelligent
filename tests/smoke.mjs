@@ -43,21 +43,19 @@ try {
     'PASS: multi-page crawl, screenshot, elements, direct listeners, declared form, passive network.',
   );
 
-  // Exercise the actual observer on our own local demo, never on a third-party form.
-  browser = await launchBrowser(true);
-  const context = await browser.newContext({
-    viewport: { width: 1365, height: 900 },
-    serviceWorkers: 'block',
-  });
-  const ids = await manager.instrument(context, job, 'record');
-  const demo = await context.newPage();
-  await demo.goto(base + '/demo');
+  // Use the real recording lifecycle on our own local fixture.
+  const recordJob = await manager.startSession(job.id, login.id);
+  assert.notEqual(recordJob.id, job.id, 'recording has a separate evidence run');
+  assert.equal(recordJob.caseId, job.caseId);
+  const session = manager.sessions.get(recordJob.id);
+  browser = session.browser;
+  const demo = session.page;
   await demo.locator('#email').fill('demo@example.com');
   await demo.locator('#password').fill('demo');
   await Promise.all([demo.waitForURL('**/demo/dashboard'), demo.locator('#login-button').click()]);
   await demo.waitForTimeout(400);
-  await manager.snapshot(demo, job, ids, 'record');
-  const loginRequest = job.requests.find(
+  await manager.captureSession(recordJob.id);
+  const loginRequest = recordJob.requests.find(
     (r) => r.url.endsWith('/demo/api/login') && r.method === 'POST',
   );
   assert(loginRequest);
@@ -68,7 +66,7 @@ try {
   );
   assert(loginRequest.event, 'request correlated with actual submit event');
   assert(loginRequest.initiator?.transport === 'fetch', 'fetch initiator recorded');
-  assert(job.events.some((e) => e.type === 'submit'));
+  assert(recordJob.events.some((e) => e.type === 'submit'));
   assert(
     !JSON.stringify(loginRequest).includes('demo@example.com'),
     'input value not retained in request report',
@@ -82,6 +80,11 @@ try {
     'PASS: real form input → submit → POST JSON → response → navigation with redacted values.',
   );
 
+  await manager.stopSession(recordJob.id);
+  assert(manager.store.verifyRun(recordJob.caseId, recordJob.id).ok);
+  assert.equal(manager.store.getRun(job.caseId, job.id).mode, 'passive');
+  browser = await launchBrowser(true);
+  const context = await browser.newContext({ viewport: { width: 1365, height: 900 } });
   const ui = await context.newPage();
   const errors = [];
   ui.on('pageerror', (error) => errors.push(error.message));
@@ -127,4 +130,5 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   await manager.close();
+  manager.store.close();
 }

@@ -1,3 +1,4 @@
+import { CaseManager, EvidencePanel } from './CaseEvidence';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
@@ -516,6 +517,9 @@ export default function App() {
   const [url, setUrl] = useState(''),
     [maxPages, setMaxPages] = useState(4),
     [allowLocal, setAllowLocal] = useState(false);
+  const [cases, setCases] = useState([]),
+    [caseId, setCaseId] = useState(null);
+  const refreshCases = () => api('/api/cases').then(setCases);
   const [history, setHistory] = useState([]),
     [job, setJob] = useState(null),
     [pageId, setPageId] = useState(null),
@@ -538,6 +542,13 @@ export default function App() {
       .catch(() => {});
   useEffect(() => {
     refreshHistory();
+    refreshCases().catch((e) => setError(e.message));
+    api('/api/health')
+      .then((health) => {
+        if (health.migrationWarnings?.length)
+          setError(`Sebagian riwayat belum diimpor: ${health.migrationWarnings.join('; ')}`);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     if (!job?.id || (!busyStatus(job.status) && !job.session)) return;
@@ -573,9 +584,16 @@ export default function App() {
     action(async () => {
       const created = await api('/api/audits', {
         method: 'POST',
-        body: JSON.stringify({ url: target, maxPages, allowLocal: local }),
+        body: JSON.stringify({
+          url: target,
+          caseId: caseId || undefined,
+          maxPages,
+          allowLocal: local,
+        }),
       });
       setJob(created);
+      setCaseId(created.caseId);
+      await refreshCases();
       setPageId(null);
       setElementId(null);
       setRequestId(null);
@@ -588,6 +606,7 @@ export default function App() {
     action(async () => {
       const selected = await api(`/api/audits/${id}`);
       setJob(selected);
+      setCaseId(selected.caseId);
       setUrl(selected.url);
       setAllowLocal(selected.allowLocal);
       setPageId(null);
@@ -718,23 +737,28 @@ export default function App() {
         </div>
         <div className="history">
           {history.length ? (
-            history.slice(0, 15).map((h) => (
-              <button
-                className={`history-item ${job?.id === h.id ? 'active' : ''}`}
-                disabled={pending || isRunning || recording}
-                key={h.id}
-                onClick={() => selectAudit(h.id)}
-              >
-                <span className={`status-dot ${h.status}`} />
-                <span>
-                  <strong>{hostname(h.url)}</strong>
-                  <small>
-                    {h.pageCount} halaman · {prettyTime(h.createdAt)}
-                  </small>
-                </span>
-                <ChevronRight size={13} />
-              </button>
-            ))
+            history
+              .filter((h) => !caseId || h.caseId === caseId)
+              .slice(0, 30)
+              .map((h) => (
+                <button
+                  className={`history-item ${job?.id === h.id ? 'active' : ''}`}
+                  disabled={pending || isRunning || recording}
+                  key={h.id}
+                  onClick={() => selectAudit(h.id)}
+                >
+                  <span className={`status-dot ${h.status}`} />
+                  <span>
+                    <strong>{hostname(h.url)}</strong>
+                    <small>
+                      {h.mode === 'record' ? 'Rekam · ' : ''}
+                      {h.legacy ? 'Legacy · ' : ''}
+                      {h.pageCount} halaman · {prettyTime(h.createdAt)}
+                    </small>
+                  </span>
+                  <ChevronRight size={13} />
+                </button>
+              ))
           ) : (
             <p className="history-empty">Audit pertama lo akan tersimpan di sini.</p>
           )}
@@ -744,7 +768,7 @@ export default function App() {
             <span /> Berjalan lokal
           </div>
           <p>Data audit tersimpan di komputer ini.</p>
-          <code>v1.0 / React + Playwright</code>
+          <code>v1.1 / Cases + Evidence</code>
         </div>
       </aside>
       <main className="main">
@@ -777,6 +801,22 @@ export default function App() {
             <Waypoints size={42} strokeWidth={1.1} />
           </div>
         </div>
+        <CaseManager
+          cases={cases}
+          selectedId={caseId}
+          disabled={pending || isRunning || recording}
+          onError={setError}
+          onSelect={(id) => {
+            setCaseId(id);
+            setJob(null);
+            setError('');
+          }}
+          onSaved={async (c) => {
+            await refreshCases();
+            setCaseId(c.id);
+            if (job?.caseId !== c.id) setJob(null);
+          }}
+        />
         <section className="scan-box" aria-label="Mulai audit website">
           <form
             onSubmit={(e) => {
@@ -955,6 +995,7 @@ export default function App() {
                 )}
               </div>
             </div>
+            <EvidencePanel job={job} onError={setError} />
             {job.warnings.length > 0 && (
               <details className="warnings">
                 <summary>

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { AuditManager } from './audit.mjs';
 
+process.umask(0o077);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 8787);
 const app = express();
@@ -35,9 +36,63 @@ const manager = new AuditManager(process.env.DATA_DIR || path.join(root, '.data'
 await manager.init();
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 app.get('/api/health', (req, res) =>
-  res.json({ ok: true, name: 'Web Intelligent', version: '1.0.0' }),
+  res.json({
+    ok: true,
+    name: 'Web Intelligent',
+    version: '1.1.0',
+    migrationWarnings: manager.migrationWarnings,
+  }),
 );
-app.get('/api/audits', (req, res) => res.json(manager.list()));
+app.get('/api/cases', (req, res) => res.json(manager.store.listCases()));
+app.post('/api/cases', (req, res) =>
+  res.status(201).json(manager.store.createCase(req.body || {})),
+);
+app.get('/api/cases/:caseId', (req, res) => res.json(manager.store.getCase(req.params.caseId)));
+app.patch('/api/cases/:caseId', (req, res) =>
+  res.json(manager.store.updateCase(req.params.caseId, req.body || {})),
+);
+app.get('/api/cases/:caseId/runs', (req, res) =>
+  res.json(manager.store.listRuns(req.params.caseId)),
+);
+app.get('/api/cases/:caseId/custody', (req, res) =>
+  res.json({
+    events: manager.store.events(req.params.caseId),
+    chainVerified: manager.store.custodyIntegrity(req.params.caseId),
+  }),
+);
+app.get('/api/cases/:caseId/runs/:runId', (req, res) => {
+  const { caseId, runId } = req.params;
+  res.json({
+    run: manager.store.getRun(caseId, runId),
+    artifacts: manager.store.artifacts(caseId, runId),
+    observations: manager.store.observations(caseId, runId),
+    events: manager.store.events(caseId, runId),
+  });
+});
+app.post('/api/cases/:caseId/runs/:runId/verify', (req, res) =>
+  res.json(manager.store.verifyRun(req.params.caseId, req.params.runId)),
+);
+app.get('/api/cases/:caseId/runs/:runId/manifest', (req, res) => {
+  const manifest = manager.store.exportManifest(req.params.caseId, req.params.runId);
+  res.attachment(`manifest-${req.params.runId}.json`).json(manifest);
+});
+app.get('/api/cases/:caseId/runs/:runId/artifacts/:artifactId', (req, res) => {
+  const { caseId, runId, artifactId } = req.params;
+  const artifact = manager.store.artifact(caseId, runId, artifactId);
+  manager.store.readArtifact(caseId, runId, artifactId);
+  res.json({ artifact, verification: { ok: true, checkedAt: new Date().toISOString() } });
+});
+app.get('/api/cases/:caseId/runs/:runId/artifacts/:artifactId/content', (req, res) => {
+  const { caseId, runId, artifactId } = req.params;
+  const artifact = manager.store.artifact(caseId, runId, artifactId);
+  const content = manager.store.readArtifact(caseId, runId, artifactId);
+  res.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.type(artifact.mimeType).send(content);
+});
+app.get('/api/audits', (req, res) => {
+  if (req.query.caseId) manager.store.getCase(req.query.caseId);
+  res.json(manager.list().filter((job) => !req.query.caseId || job.caseId === req.query.caseId));
+});
 app.post(
   '/api/audits',
   asyncRoute(async (req, res) => {
@@ -53,12 +108,30 @@ app.get('/api/audits/:id', (req, res) => {
 app.get('/api/audits/:id/export', (req, res) => {
   const job = manager.jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Audit tidak ditemukan.' });
-  res.set('Content-Disposition', `attachment; filename="webintelligent-${job.id}.json"`).json(job);
+  const run = manager.store.getRun(job.caseId, job.id);
+  if (run.status === 'running')
+    return res.status(409).json({ error: 'Selesaikan capture sebelum ekspor.' });
+  const verification = manager.store.verifyRun(job.caseId, job.id);
+  if (!verification.ok)
+    return res.status(409).json({ error: 'Ekspor diblokir: integritas bukti gagal.' });
+  const bytes = manager.store.readArtifact(job.caseId, job.id, run.reportArtifactId);
+  manager.store.event(
+    job.caseId,
+    job.id,
+    'report.exported',
+    manager.store.getCase(job.caseId).operator,
+    { artifactId: run.reportArtifactId },
+  );
+  res.attachment(`webintelligent-${job.id}.json`).type('json').send(bytes);
 });
 app.get('/api/audits/:id/images/:file', (req, res) => {
-  if (!manager.jobs.has(req.params.id) || !/^p-[a-f0-9-]+-\d+\.png$/.test(req.params.file))
-    return res.sendStatus(404);
-  res.sendFile(path.join(manager.directory, req.params.id, req.params.file), { dotfiles: 'allow' });
+  const job = manager.jobs.get(req.params.id);
+  if (!job || !/^p-[a-f0-9-]+-\d+\.png$/.test(req.params.file)) return res.sendStatus(404);
+  const artifact = manager.store
+    .artifacts(job.caseId, job.id)
+    .find((a) => a.kind === 'screenshot' && a.label === req.params.file);
+  if (!artifact) return res.sendStatus(404);
+  res.type('png').send(manager.store.readArtifact(job.caseId, job.id, artifact.id));
 });
 app.post(
   '/api/audits/:id/cancel',
@@ -115,7 +188,24 @@ if (process.env.NODE_ENV === 'development') {
   const { createServer } = await import('vite');
   const vite = await createServer({
     root,
-    server: { middlewareMode: true, hmr: { server } },
+    server: {
+      middlewareMode: true,
+      hmr: { server },
+      fs: {
+        strict: true,
+        allow: [root],
+        deny: [
+          '.env',
+          '.env.*',
+          '*.{crt,pem,key}',
+          '**/.git/**',
+          '**/.data*/**',
+          '**/evidence.sqlite*',
+          path.join(manager.directory, '**'),
+          path.join(manager.store.keyDirectory, '**'),
+        ],
+      },
+    },
     appType: 'spa',
   });
   app.use(vite.middlewares);
@@ -151,6 +241,9 @@ for (const signal of ['SIGINT', 'SIGTERM'])
     if (closing) return;
     closing = true;
     await manager.close();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      manager.store.close();
+      process.exit(0);
+    });
     setTimeout(() => process.exit(0), 3000).unref();
   });

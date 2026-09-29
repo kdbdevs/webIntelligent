@@ -2018,3 +2018,198 @@ pre {
     visibility: visible;
   }
 }
+
+/* Case and evidence workspace extends the existing explorer. */
+.case-manager,
+.evidence-panel {
+  margin: 0 0 20px;
+  padding: 18px;
+  border: 1px solid #dce5dc;
+  border-radius: 14px;
+  background: #fff;
+  min-width: 0;
+}
+.case-heading,
+.evidence-heading,
+.evidence-actions,
+.case-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.case-heading label {
+  flex: 1;
+  min-width: 200px;
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  color: #526956;
+}
+.case-manager input,
+.case-manager select,
+.case-manager textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d3ded3;
+  border-radius: 7px;
+  background: #fbfcf9;
+  color: #223a2a;
+  font: inherit;
+}
+.case-manager textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+.case-summary {
+  margin-top: 12px;
+  color: #607263;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.case-summary p {
+  margin: 5px 0;
+}
+.case-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 18px;
+}
+.case-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.case-form small {
+  color: #657669;
+  font-size: 11px;
+}
+.case-wide {
+  grid-column: 1 / -1;
+}
+.evidence-heading > span {
+  color: #647567;
+  font-size: 11px;
+}
+.evidence-intro {
+  margin: 16px 0;
+  font-size: 12px;
+  color: #536a59;
+}
+.evidence-intro p {
+  margin: 5px 0;
+}
+.evidence-intro strong {
+  color: #233d2b;
+}
+.evidence-actions {
+  margin-bottom: 14px;
+}
+.evidence-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  border: 1px solid #e0e7de;
+  border-radius: 9px;
+  overflow: hidden;
+}
+.artifact-list {
+  max-height: 480px;
+  overflow: auto;
+  border-right: 1px solid #e0e7de;
+}
+.artifact-list button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid #e4ebe1;
+  background: #fafcf8;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.artifact-list button.selected {
+  background: #eaf3e4;
+}
+.artifact-list strong {
+  font-size: 12px;
+}
+.artifact-list span {
+  color: #607267;
+  font-size: 10px;
+}
+.artifact-list code {
+  font-size: 9px;
+}
+.artifact-inspector {
+  padding: 16px;
+  min-width: 0;
+  max-height: 620px;
+  overflow: auto;
+  font-size: 12px;
+}
+.artifact-inspector dl > div {
+  display: grid;
+  grid-template-columns: 115px minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eef1eb;
+}
+.artifact-inspector dt {
+  color: #718075;
+}
+.artifact-inspector dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.artifact-inspector img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 14px;
+}
+.artifact-inspector pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+.integrity-result {
+  padding: 10px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.integrity-result.good {
+  background: #e6f3e5;
+  color: #295632;
+}
+.integrity-result.bad {
+  background: #fff0e9;
+  color: #8b3924;
+}
+.custody {
+  margin-top: 15px;
+  font-size: 11px;
+  color: #586d5b;
+}
+.custody p {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .case-manager,
+  .evidence-panel {
+    padding: 12px;
+  }
+  .case-form,
+  .evidence-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .artifact-list {
+    max-height: 200px;
+    border-right: none;
+  }
+  .artifact-inspector dl > div {
+    grid-template-columns: 90px minmax(0, 1fr);
+  }
+}
