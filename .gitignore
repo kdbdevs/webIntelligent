@@ -1,0 +1,13 @@
+node_modules/
+.data/
+.data*/
+*.key
+*.sqlite
+*.sqlite-*
+.playwright-cli/
+output/
+.DS_Store
+.env
+.env.*
+!.env.example
+dist/
