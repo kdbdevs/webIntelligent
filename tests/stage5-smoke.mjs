@@ -56,7 +56,7 @@ try {
     return route.continue();
   });
   ui.on('pageerror', (e) => errors.push(e.message));
-  await ui.goto(base, { waitUntil: 'domcontentloaded' });
+  await ui.goto(base + '/#/lab-forensik', { waitUntil: 'domcontentloaded' });
   await ui.getByLabel('Kasus aktif', { exact: true }).selectOption(caseId);
   const panel = ui.getByRole('region', { name: 'Forensik kasus' });
   await panel.getByRole('button', { name: 'Buka workspace forensik' }).click();

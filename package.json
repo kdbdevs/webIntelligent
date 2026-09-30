@@ -22,7 +22,8 @@
     "smoke:stage4": "node tests/stage4-smoke.mjs",
     "smoke:stage5": "node tests/stage5-smoke.mjs",
     "smoke:stage6": "node tests/stage6-smoke.mjs",
-    "verify:package": "node tools/verify-package.mjs"
+    "verify:package": "node tools/verify-package.mjs",
+    "smoke:menus": "node tests/workspace-smoke.mjs"
   },
   "dependencies": {
     "@xyflow/react": "12.12.0",

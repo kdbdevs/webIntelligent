@@ -1,3 +1,4 @@
+import { useWorkspace, WorkspaceMenu, WorkspaceGuide } from './Workspaces';
 import { CaseManager, EvidencePanel } from './CaseEvidence';
 import { AuthSession } from './AuthSession';
 import { WiringExplorer } from './WiringExplorer';
@@ -8,7 +9,7 @@ const ReportWorkspace = React.lazy(() =>
 const ForensicWorkspace = React.lazy(() =>
   import('./ForensicWorkspace').then((m) => ({ default: m.ForensicWorkspace })),
 );
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -618,6 +619,12 @@ function RequestInspector({ request }) {
 }
 
 export default function App() {
+  const { workspace, choose, config: workspaceConfig, visited } = useWorkspace();
+  const workspaceHeading = useRef(null);
+  const professional = workspace !== 'learn';
+  const visitedProfessional = professional || visited.has('cyber') || visited.has('lab');
+  const visitedLab = workspace === 'lab' || visited.has('lab');
+  const WorkspaceIcon = workspaceConfig.icon;
   const [url, setUrl] = useState(''),
     [maxPages, setMaxPages] = useState(4),
     [allowLocal, setAllowLocal] = useState(false);
@@ -636,6 +643,15 @@ export default function App() {
     [filter, setFilter] = useState(''),
     [graphDetail, setGraphDetail] = useState(null),
     [mobileNav, setMobileNav] = useState(false);
+  const chooseWorkspace = (id) => {
+    choose(id);
+    setMobileNav(false);
+  };
+  useEffect(() => {
+    workspaceHeading.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    setMobileNav(false);
+  }, [workspace]);
   const [capturedRequests, setCapturedRequests] = useState(null);
   const page = job?.pages.find((p) => p.id === pageId) || job?.pages[0];
   const element = page?.elements.find((e) => e.id === elementId) || page?.elements[0];
@@ -881,7 +897,8 @@ export default function App() {
           className="brand"
           href="/"
           onClick={(e) => {
-            if (recording || isRunning) e.preventDefault();
+            e.preventDefault();
+            chooseWorkspace('learn');
           }}
         >
           <span className="brand-symbol">
@@ -894,11 +911,7 @@ export default function App() {
         </a>
         <div className="sidebar-section">
           <span className="eyebrow">WORKSPACE</span>
-          <div className="sidebar-current">
-            <ScanLine size={17} />
-            <span>Website explorer</span>
-            <span className="keycap">01</span>
-          </div>
+          <WorkspaceMenu workspace={workspace} onSelect={chooseWorkspace} />
         </div>
         <div className="history-heading">
           <span className="eyebrow">AUDIT TERAKHIR</span>
@@ -958,7 +971,7 @@ export default function App() {
             </button>
             <span>Workspace</span>
             <ChevronRight size={13} />
-            <strong>Website explorer</strong>
+            <strong>{workspaceConfig.title}</strong>
           </div>
           <div className="local-pill">
             <span /> LOCAL APP
@@ -966,16 +979,31 @@ export default function App() {
         </header>
         <div className="workspace-head">
           <div>
-            <div className="eyebrow">UNDERSTAND EVERY CONNECTION</div>
-            <h1>
-              Website explorer<span>.</span>
+            <div className="eyebrow">{workspaceConfig.eyebrow}</div>
+            <h1 ref={workspaceHeading} tabIndex={-1}>
+              {workspaceConfig.title}
+              <span>.</span>
             </h1>
-            <p>Petakan halaman, bongkar elemen, ikuti perjalanan request.</p>
+            <p>{workspaceConfig.description}</p>
           </div>
           <div className="head-mark">
-            <Waypoints size={42} strokeWidth={1.1} />
+            <WorkspaceIcon size={42} strokeWidth={1.1} />
           </div>
         </div>
+        <WorkspaceGuide
+          workspace={workspace}
+          hasCapture={!!page}
+          onChoose={chooseWorkspace}
+          onExplore={(next) => {
+            setTab(next);
+            setGraphDetail(null);
+            requestAnimationFrame(() =>
+              document
+                .querySelector('.audit-workbench')
+                ?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+            );
+          }}
+        />
         <CaseManager
           cases={cases}
           selectedId={caseId}
@@ -992,22 +1020,30 @@ export default function App() {
             if (job?.caseId !== c.id) setJob(null);
           }}
         />
-        <React.Suspense fallback={<p>Memuat workspace forensik…</p>}>
-          <ForensicWorkspace
-            key={caseId || 'no-case'}
-            caseId={caseId}
-            operator={cases.find((c) => c.id === caseId)?.operator}
-            disabled={pending || isRunning || recording}
-          />
-        </React.Suspense>
-        <React.Suspense fallback={<p>Memuat pelaporan…</p>}>
-          <ReportWorkspace
-            key={caseId || 'report-no-case'}
-            caseId={caseId}
-            operator={cases.find((c) => c.id === caseId)?.operator}
-            disabled={pending || isRunning || recording}
-          />
-        </React.Suspense>
+        <div className="workspace-section" hidden={workspace !== 'lab'}>
+          {visitedLab && (
+            <React.Suspense fallback={<p>Memuat workspace forensik…</p>}>
+              <ForensicWorkspace
+                key={caseId || 'no-case'}
+                caseId={caseId}
+                operator={cases.find((c) => c.id === caseId)?.operator}
+                disabled={pending || isRunning || recording}
+              />
+            </React.Suspense>
+          )}
+        </div>
+        <div className="workspace-section" hidden={!professional}>
+          {visitedProfessional && (
+            <React.Suspense fallback={<p>Memuat pelaporan…</p>}>
+              <ReportWorkspace
+                key={caseId || 'report-no-case'}
+                caseId={caseId}
+                operator={cases.find((c) => c.id === caseId)?.operator}
+                disabled={pending || isRunning || recording}
+              />
+            </React.Suspense>
+          )}
+        </div>
         <section className="scan-box" aria-label="Mulai audit website">
           <form
             onSubmit={(e) => {
@@ -1063,15 +1099,17 @@ export default function App() {
             </span>
           </div>
         </section>
-        <AuthSession
-          job={job}
-          caseId={caseId}
-          scope={cases.find((c) => c.id === caseId)?.scope.navigation}
-          disabled={pending || isRunning || recording}
-          pending={pending}
-          onOpen={openAuthenticated}
-          onAction={authenticatedAction}
-        />
+        <div className="workspace-section" hidden={!professional && !recording}>
+          <AuthSession
+            job={job}
+            caseId={caseId}
+            scope={cases.find((c) => c.id === caseId)?.scope.navigation}
+            disabled={pending || isRunning || recording}
+            pending={pending}
+            onOpen={openAuthenticated}
+            onAction={authenticatedAction}
+          />
+        </div>
         {error && (
           <div className="error-banner" role="alert">
             <AlertTriangle size={17} />
@@ -1195,8 +1233,14 @@ export default function App() {
                 )}
               </div>
             </div>
-            <EvidencePanel job={job} onError={setError} />
-            <SecurityFindings key={job.id} job={job} />
+            <div className="workspace-section" hidden={!professional}>
+              {visitedProfessional && (
+                <>
+                  <EvidencePanel job={job} onError={setError} />
+                  <SecurityFindings key={job.id} job={job} />
+                </>
+              )}
+            </div>
             {job.warnings.length > 0 && (
               <details className="warnings">
                 <summary>

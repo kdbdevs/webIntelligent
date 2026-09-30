@@ -32,7 +32,7 @@ try {
   const ui = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
-  await ui.goto(base);
+  await ui.goto(base + '/#/cybersecurity');
   await ui.getByRole('button', { name: 'Buat kasus', exact: true }).click();
   await ui.getByLabel('Judul kasus', { exact: true }).fill('Stage 2 UI fixture');
   await ui.getByLabel('Operator kasus', { exact: true }).fill('Synthetic investigator');
@@ -54,6 +54,15 @@ try {
   await session.openTask;
   const audit = session.page;
   assert.equal((await audit.reload()).status(), 401);
+  // Switching menus must neither close the live browser nor hide its controls.
+  await ui.getByRole('link', { name: 'Belajar Web', exact: true }).click();
+  await ui.getByRole('region', { name: 'Audit dengan login', exact: true }).waitFor();
+  assert(await ui.getByRole('button', { name: 'Tutup & simpan run', exact: true }).isVisible());
+  assert.equal(manager.sessions.get(job.id), session);
+  assert.equal(audit.isClosed(), false);
+  assert.equal(await ui.getByLabel('Kasus aktif', { exact: true }).inputValue(), caseId);
+  await ui.getByRole('link', { name: 'Cybersecurity', exact: true }).click();
+
   await audit.getByRole('link', { name: 'Login fixture' }).click();
   await audit.getByLabel('Email', { exact: true }).fill('fixture@example.test');
   await audit.getByLabel('Password', { exact: true }).fill('fixture-password');

@@ -84,7 +84,7 @@ try {
     }
     return route.continue();
   });
-  await ui.goto(base);
+  await ui.goto(base + '/#/lab-forensik');
   await ui.getByLabel('Kasus aktif', { exact: true }).selectOption(c.id);
   const panel = ui.getByRole('region', { name: 'Pelaporan kasus' });
   await panel.getByRole('button', { name: /Laporan, perbandingan/ }).click();

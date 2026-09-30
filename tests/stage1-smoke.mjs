@@ -38,7 +38,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1365, height: 1000 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(base);
+  await page.goto(base + '/#/lab-forensik');
   await page.getByRole('button', { name: 'Buat kasus', exact: true }).click();
   await page.getByLabel('Judul kasus', { exact: true }).fill('Stage 1 browser fixture');
   await page.getByLabel('Operator kasus', { exact: true }).fill('Fixture analyst');

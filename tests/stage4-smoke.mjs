@@ -78,7 +78,7 @@ try {
     new URL(route.request().url()).origin === base ? route.continue() : route.abort(),
   );
   ui.on('pageerror', (e) => errors.push(e.message));
-  await ui.goto(base, { waitUntil: 'domcontentloaded' });
+  await ui.goto(base + '/#/cybersecurity', { waitUntil: 'domcontentloaded' });
   await ui.locator('.history-item').first().click();
   const panel = ui.getByRole('region', { name: 'Pemeriksaan keamanan' });
   await panel.getByRole('button', { name: 'Analisis bukti', exact: true }).click();

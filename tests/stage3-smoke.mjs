@@ -300,7 +300,7 @@ try {
   await ui.route('**/*', (route) =>
     new URL(route.request().url()).origin === base ? route.continue() : route.abort(),
   );
-  await ui.goto(base, { waitUntil: 'domcontentloaded' });
+  await ui.goto(base + '/#/cybersecurity', { waitUntil: 'domcontentloaded' });
   await ui.getByLabel('Kasus aktif', { exact: true }).selectOption(c.id);
   await ui.locator('.history-item').filter({ hasText: 'Sesi' }).first().click();
   await ui.getByRole('button', { name: 'Wiring & aset', exact: true }).click();

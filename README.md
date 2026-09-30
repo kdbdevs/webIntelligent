@@ -1,6 +1,8 @@
 # Web Intelligent
 
-App lokal untuk memetakan website dari URL: screenshot dengan penanda elemen, wiring navigasi, alur data, dan inspector network. Frontend **React 19 + React Flow**, backend **Node.js + Express + Playwright**.
+WebIntelligent adalah app lokal untuk belajar cara kerja website, meninjau keamanan berdasarkan capture, dan melakukan investigasi lintas artefak. Tiga menu — **Belajar Web**, **Cybersecurity**, dan **Lab Forensik** — memakai kasus dan fondasi bukti yang sama.
+
+Masukkan URL untuk memetakan screenshot, elemen, navigasi, aset, dan perjalanan request. Gunakan sesi browser untuk halaman yang membutuhkan login, atau impor sumber ke Lab Forensik untuk analisis lintas artefak. Frontend **React 19 + React Flow**, backend **Node.js + Express + Playwright**. Fungsi inti berjalan tanpa layanan AI atau API key.
 
 ## Jalankan
 
@@ -13,7 +15,7 @@ npm run build
 npm start
 ```
 
-Buka **http://127.0.0.1:8787**. Di Mac, app bisa memakai Google Chrome yang sudah terpasang apabila browser bundled Playwright belum tersedia. Dependensi dan build sudah disiapkan pada instalasi project ini.
+Buka [WebIntelligent lokal](http://127.0.0.1:8787/). Instalasi baru membuka **Belajar Web**. Di Mac, app bisa memakai Google Chrome yang sudah terpasang apabila browser bundled Playwright belum tersedia.
 
 Development dengan hot reload:
 
@@ -23,22 +25,44 @@ npm run dev
 
 Port berbeda: `PORT=8788 npm start`. Data kasus dan artefak disimpan di `.data/evidence.sqlite`; atur `DATA_DIR` untuk lokasi lain. Kunci enkripsi berada di direktori terpisah `${DATA_DIR}.keys/master.key` (default `.data.keys/master.key`); `EVIDENCE_KEY_DIR` dapat menunjuk direktori kunci di luar `DATA_DIR`. `BROWSER_CHANNEL=chrome` memilih Chrome secara eksplisit.
 
+## Tiga menu workspace
+
+Pilih menu di sidebar desktop atau buka tombol menu di kiri atas pada layar mobile.
+
+| Menu              | Tujuan                                   | Fitur yang ditampilkan                                                                                                                              | URL lokal                                                   |
+| ----------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Belajar Web**   | Memahami halaman dan perjalanan data     | Panduan elemen → aset → alur data, glosarium, input URL/demo, screenshot, navigasi, network, wiring, dan rekam interaksi                            | [Buka Belajar Web](http://127.0.0.1:8787/#/belajar-web)     |
+| **Cybersecurity** | Audit dan review keamanan berbasis bukti | Seluruh explorer web, sesi login, bukti/manifest, pemeriksaan pasif, review temuan, perbandingan capture, laporan, dan asisten opsional             | [Buka Cybersecurity](http://127.0.0.1:8787/#/cybersecurity) |
+| **Lab Forensik**  | Investigasi dengan seluruh fitur         | Semua fitur Cybersecurity ditambah impor HAR/log/CSV/email/file, timeline lintas sumber, graph korelasi, catatan, hipotesis, dan transformasi waktu | [Buka Lab Forensik](http://127.0.0.1:8787/#/lab-forensik)   |
+
+Alur awal per menu:
+
+- **Belajar Web:** masukkan URL atau klik **Audit demo** → setelah capture, pilih **Kenali elemen**, **Telusuri sumber aset**, atau **Ikuti perjalanan data**. Tombol panduan membuka tab explorer yang sesuai. Kasus dibuat otomatis jika belum dipilih.
+- **Cybersecurity:** pilih kasus dan scope → audit publik atau **Buka browser audit** untuk login sendiri → capture → **Pemeriksaan keamanan** → review bukti → susun laporan. Kandidat masalah tetap perlu keputusan analis.
+- **Lab Forensik:** pilih kasus → **Buka workspace forensik** → impor sumber atau tambahkan capture tersegel → telusuri timeline/provenance dan graph → susun catatan/hipotesis → review laporan.
+
+Pergantian menu mempertahankan kasus, audit, pilihan elemen/tab, draft formulir, dan file yang belum disubmit dalam halaman yang sama. Sesi browser aktif tetap hidup; kontrol sesinya tetap terlihat meskipun berpindah ke Belajar Web. Tombol Back/Forward mengikuti perpindahan menu. Pilihan menu tidak otomatis menjalankan audit, assessment, impor, atau pengiriman AI.
+
+URL menu diprioritaskan saat membuka halaman; tanpa URL menu, app memakai preferensi terakhir, atau Belajar Web bila belum ada preferensi. Hanya ID menu disimpan di localStorage. Reload tidak memulihkan draft/form yang belum disimpan atau pilihan hasil audit; buka kembali audit tersimpan melalui riwayat.
+
+Ketiga menu memakai penyimpanan dan batas scope/redaksi yang sama. Ini pembagian tampilan kerja, bukan pemisahan izin akses, salinan kasus, atau tiga aplikasi berbeda.
+
 ## Pakai app
 
-1. Pilih **Buat kasus**, isi judul, tujuan, operator, scope navigasi domain/URL, dan catatan. Kasus dapat diedit atau ditutup setelah run selesai. Tanpa pilihan kasus, audit membuat kasus otomatis. Isi URL, pilih batas 1–10 halaman, lalu **Audit website**. URL tanpa scheme memakai HTTPS.
+1. Pilih menu sesuai tujuan, lalu **Buat kasus** dan isi judul, tujuan, operator, scope navigasi domain/URL, dan catatan. Kasus dapat diedit atau ditutup setelah run selesai. Tanpa pilihan kasus, audit membuat kasus otomatis. Isi URL, pilih batas 1–10 halaman, lalu **Audit website**. URL tanpa scheme memakai HTTPS.
 2. **Elemen** menampilkan screenshot asli dengan penanda, selector, field name, form induk, deklarasi method/action/enctype, dan listener langsung yang terdeteksi.
 3. **Alur halaman** menampilkan hubungan `href` melalui React Flow. Node bisa digeser; canvas bisa di-pan/zoom. URL yang belum dipindai dibedakan dari halaman yang sudah dipindai.
 4. **Alur data** mempertahankan ringkasan elemen, handler, parameter, endpoint, dan respons. **Wiring & aset** menyediakan graph per capture dengan referensi bukti serta hubungan **observed**, **declared**, **correlated**, **inferred**, atau **unknown**. Klik node/garis untuk alasan dan keterbatasannya.
 5. **Network** memperlihatkan method, endpoint, HTTP status, content type, nama/tipe body parameters, query parameter names, dan initiator stack apabila tersedia.
-6. **Audit dengan login → Buka browser audit** membuka context sementara khusus run kasus terpilih. Login/MFA sendiri di browser itu, pilih tab target, klik **Halaman siap**, lalu **Mulai capture snapshot** atau **Mulai crawl pilihan**. **Jeda koleksi** menghentikan pencatatan; **Tutup & simpan run** menyegel bukti. **Rekam interaksi** dari hasil audit tetap tersedia dan membuka alur sesi baru di kasus yang sama, dengan referensi ke run asal. Snapshot berikutnya menambah artefak, tidak menimpa artefak lama.
-7. **Bukti & manifest** menampilkan artefak, sumber, waktu, peran, hash, observasi, dan riwayat penanganan. Klik artefak untuk pemeriksaan integritas sebelum preview; **Verifikasi integritas** memeriksa seluruh run. **Ekspor manifest** menghasilkan metadata, hash, hasil verifikasi, dan rantai custody kasus. **JSON** tetap mengunduh laporan audit tersensor. Ekspor ditolak jika bukti gagal diverifikasi. Riwayat difilter menurut kasus.
-8. Setelah run selesai, **Pemeriksaan keamanan → Analisis bukti** menjalankan tujuh rule pasif atas artefak terverifikasi. Pilih finding → **Tinjau bukti request** / **Buka wiring** → pilih bukti pendukung atau penyangkal → **Review manual**. **Ekspor security + manifest** menyertakan assessment, keputusan, skenario, dan manifest run terkait. Capture lama yang belum merekam metadata header tetap dapat dianalisis dengan hasil **not-assessed** untuk input yang belum tersedia.
+6. Di menu **Cybersecurity** atau **Lab Forensik**, **Audit dengan login → Buka browser audit** membuka context sementara khusus run kasus terpilih. Login/MFA sendiri di browser itu, pilih tab target, klik **Halaman siap**, lalu **Mulai capture snapshot** atau **Mulai crawl pilihan**. **Jeda koleksi** menghentikan pencatatan; **Tutup & simpan run** menyegel bukti. **Rekam interaksi** dari hasil audit tetap tersedia dan membuka alur sesi baru di kasus yang sama, dengan referensi ke run asal. Snapshot berikutnya menambah artefak, tidak menimpa artefak lama.
+7. Di menu **Cybersecurity** atau **Lab Forensik**, **Bukti & manifest** menampilkan artefak, sumber, waktu, peran, hash, observasi, dan riwayat penanganan. Klik artefak untuk pemeriksaan integritas sebelum preview; **Verifikasi integritas** memeriksa seluruh run. **Ekspor manifest** menghasilkan metadata, hash, hasil verifikasi, dan rantai custody kasus. **JSON** tetap mengunduh laporan audit tersensor. Ekspor ditolak jika bukti gagal diverifikasi. Riwayat difilter menurut kasus.
+8. Di menu **Cybersecurity** atau **Lab Forensik**, setelah run selesai, **Pemeriksaan keamanan → Analisis bukti** menjalankan tujuh rule pasif atas artefak terverifikasi. Pilih finding → **Tinjau bukti request** / **Buka wiring** → pilih bukti pendukung atau penyangkal → **Review manual**. **Ekspor security + manifest** menyertakan assessment, keputusan, skenario, dan manifest run terkait. Capture lama yang belum merekam metadata header tetap dapat dianalisis dengan hasil **not-assessed** untuk input yang belum tersedia.
 
 **Audit demo** menyediakan form demonstrasi request dan endpoint lokal. Akun demo: `demo@example.com`, password `demo`. Tombol demo mengaktifkan izin localhost. Demo lama tidak melindungi halaman memakai cookie. Untuk menguji autentikasi sungguhan gunakan fixture cookie tahap 2 di bawah.
 
 ## Pelaporan kasus — tahap 6
 
-Pilih kasus → **Laporan, perbandingan & asisten** → muat ulang sumber → pilih versi artefak (maksimal 12) → **Buat draft**. Sumber yang tersedia: capture `run-report` atau snapshot `page-extraction`, versi `forensic-parse`, assessment keamanan, perbandingan tersimpan, dan hasil asisten yang referensinya lolos validasi. Tidak ada data simulasi yang ditambahkan ke kasus nyata. Dataset tes diberi label sintetis.
+Buka menu **Cybersecurity** atau **Lab Forensik** → pilih kasus → **Laporan, perbandingan & asisten** → muat ulang sumber → pilih versi artefak (maksimal 12) → **Buat draft**. Sumber yang tersedia: capture `run-report` atau snapshot `page-extraction`, versi `forensic-parse`, assessment keamanan, perbandingan tersimpan, dan hasil asisten yang referensinya lolos validasi. Tidak ada data simulasi yang ditambahkan ke kasus nyata. Dataset tes diberi label sintetis.
 
 Draft membekukan tujuan/scope kasus, metode/versi, waktu, coverage, timeline, observasi, korelasi, hipotesis dan status temuan hasil review manusia. Tombol **Bukti** memverifikasi hash dan membuka JSON pointer sumber sebagai teks. Isi website/email/log tidak dieksekusi. Rekomendasi dan detail temuan privat tersedia dalam panel. Perubahan parsing/review/koreksi jam setelah draft dibuat tidak mengubah snapshot lama. Isi peninjau, alasan, dan konfirmasi review untuk **Tandai final sebagai versi baru**. Status final laporan tidak otomatis memvalidasi temuan di dalamnya.
 
@@ -73,7 +97,7 @@ Batas dan catatan kesiapan rilis ada di [handoff tahap 6](docs/handoff-stage-6.m
 
 ## Forensik kasus — tahap 5
 
-Pilih kasus → **Buka workspace forensik**. Tambahkan capture browser yang sudah tersegel, atau impor file lokal (maksimal 8 MiB). Impor tidak mengunjungi URL dalam file. Asli disimpan terenkripsi dan hanya diunduh melalui tindakan eksplisit; hasil parsing berversi menjadi artefak terpisah. Impor identik tetap menghasilkan salinan dengan provenance sendiri. Tidak ada database/dependency baru.
+Buka menu **Lab Forensik** → pilih kasus → **Buka workspace forensik**. Tambahkan capture browser yang sudah tersegel, atau impor file lokal (maksimal 8 MiB). Impor tidak mengunjungi URL dalam file. Asli disimpan terenkripsi dan hanya diunduh melalui tindakan eksplisit; hasil parsing berversi menjadi artefak terpisah. Impor identik tetap menghasilkan salinan dengan provenance sendiri. Tidak ada database/dependency baru.
 
 | Format        | Profil yang didukung                                                                                                                                                                                                           |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -120,7 +144,8 @@ npm run smoke:stage4 # regresi audit, login, wiring dan review keamanan
 ## Struktur
 
 ```text
-src/App.jsx                 UI, inspector, React Flow
+src/App.jsx                 UI bersama, inspector, React Flow
+src/Workspaces.jsx          Tiga menu, URL/preferensi, panduan dan glosarium
 src/styles.css              Layout responsive
 server/index.mjs            Local API + static frontend
 server/audit.mjs            Crawl publik, instrumentasi, snapshot, checkpoint, impor legacy
@@ -135,6 +160,7 @@ server/browser-scripts.mjs  DOM extraction + observer injection
 server/safety.mjs           URL checks and parameter redaction
 public/demo.*               Local test website
 tests/                     Unit tests + real-browser smoke test
+tests/workspace-smoke.mjs   Regresi menu, state/draft, Back/Forward dan mobile
 ```
 
 ## Verifikasi
@@ -142,11 +168,16 @@ tests/                     Unit tests + real-browser smoke test
 ```sh
 npm test
 npm run build
+npm run smoke:menus # server + data fixture terisolasi otomatis
 # Saat server sudah berjalan:
 npm run smoke
 ```
 
 Smoke test menjalankan crawl, capture screenshot, membaca listener dan form, mencoba POST pada demo lokal, memeriksa penyamaran input, lalu menguji React Flow, inspector, dan layout mobile. Screenshot hasil pemeriksaan ada di `output/playwright/`.
+
+Verifikasi perubahan tiga menu pada 30 September 2026: build, **53/53 tes** (`npm test`), `smoke:menus`, dan smoke tahap 2–6 lulus. Tes menu memeriksa perpindahan saat capture berjalan, draft/form/file yang dipertahankan, hash, tautan panduan, Back/Forward, deep link, preferensi menu, serta layout mobile 390px. Smoke tahap 2 juga memeriksa sesi login aktif saat berpindah menu. Tes tahap 1 melalui UI tidak dijalankan ulang pada perubahan menu; pengujian fondasi bukti tercakup dalam `npm test`.
+
+`smoke:menus` serta smoke tahap 2–6 menyiapkan server, database, kunci, dan fixture sintetis terisolasi. Hasil tes menu ada di `output/playwright/workspace-checks.json`; output dan screenshot diabaikan Git. Port default tes menu adalah 8794, dapat diganti dengan `WORKSPACE_TEST_PORT=8795 npm run smoke:menus`.
 
 ## Fondasi bukti tahap 1
 
@@ -187,6 +218,8 @@ Unit/integration tests membuat database sementara; uji manipulasi hanya mengubah
 Lihat [handoff tahap 1](docs/handoff-stage-1.md) untuk skema, hasil verifikasi, dan pekerjaan selanjutnya. Rujukan implementasi: [SQLite bawaan Node](https://nodejs.org/api/sqlite.html) dan [API crypto Node](https://nodejs.org/api/crypto.html).
 
 ## Audit dengan login — tahap 2
+
+Mulai dari menu **Cybersecurity** atau **Lab Forensik**.
 
 1. Buat/pilih kasus. Masukkan URL awal **dalam scope kasus**, lalu buka pengaturan **Audit dengan login**. Tentukan timeout absolut 1–120 menit; default 15. Untuk SSO lintas origin, masukkan origin login tambahan. Origin URL awal diizinkan untuk transit login manual; ini tidak menambahkan halaman lain ke scope capture. URL login opsional berfungsi sebagai indikator kembalinya browser ke login, bukan pembuktian autentikasi.
 2. Klik **Buka browser audit**, login/MFA langsung di browser tersebut. App tidak meminta kredensial, tidak memakai cookie browser harian, dan tidak melewati CAPTCHA. Default belum mengumpulkan DOM, screenshot, event, atau request. Metadata lifecycle/tab/URL navigasi serta keputusan redirect/blokir tersanitasi tetap dicatat untuk scope dan penanganan sesi. **Opt-in observasi login** hanya menambahkan metadata request/event sejak browser dibuka; tidak mengambil screenshot otomatis atau nilai kredensial.
@@ -282,7 +315,7 @@ Lihat [handoff tahap 3](docs/handoff-stage-3.md). Referensi perilaku browser: [c
 
 ## Tahap 4: pemeriksaan keamanan berbasis bukti
 
-Panel **Pemeriksaan keamanan** membaca capture tersimpan setelah run disegel. Rule awal memeriksa kebijakan header, HSTS, atribut Set-Cookie, mixed content teramati, nama query sensitif, potensi transfer cleartext dan penerima data lintas origin. Nilai cookie/token dan state autentikasi tidak disimpan. Header absen, domain berbeda atau HTTP error tidak otomatis menjadi kerentanan; bukti yang belum dikumpulkan ditandai `not-assessed`.
+Panel **Pemeriksaan keamanan** di menu **Cybersecurity** atau **Lab Forensik** membaca capture tersimpan setelah run disegel. Rule awal memeriksa kebijakan header, HSTS, atribut Set-Cookie, mixed content teramati, nama query sensitif, potensi transfer cleartext dan penerima data lintas origin. Nilai cookie/token dan state autentikasi tidak disimpan. Header absen, domain berbeda atau HTTP error tidak otomatis menjadi kerentanan; bukti yang belum dikumpulkan ditandai `not-assessed`.
 
 Analisis menyimpan assessment baru di kasus yang sama. Tinjau finding → sumber artefak/hash → wiring/elemen/request → pilih bukti pendukung/penyangkal → simpan review. Risk dan confidence terpisah. Riwayat keputusan tidak ditimpa; `validated` hanya dapat ditetapkan analis dari kandidat dengan alasan dan bukti. Deklarasi reviewer/ownership bersifat lokal, bukan identitas/kepemilikan yang dibuktikan sistem.
 

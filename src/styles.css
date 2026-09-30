@@ -3053,3 +3053,211 @@ pre {
   background: var(--mint);
   color: var(--green);
 }
+
+/* Three workspaces share one case/capture; hidden panels preserve unfinished form state. */
+.workspace-section[hidden] {
+  display: none !important;
+}
+.workspace-menu {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.workspace-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.workspace-link > span:not(.keycap) {
+  min-width: 0;
+  flex: 1;
+}
+.workspace-link strong {
+  display: block;
+  font-size: 12px;
+  color: var(--ink);
+}
+.workspace-link small {
+  display: block;
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 3px;
+}
+.workspace-link:hover {
+  background: #f5f8f5;
+}
+.workspace-link.active {
+  background: var(--mint);
+  border-color: #cddfd1;
+  color: var(--green);
+}
+.workspace-link:focus-visible {
+  outline-offset: 1px;
+}
+.workspace-link .keycap {
+  flex: none;
+}
+.workspace-head h1:focus {
+  outline: none;
+}
+.workspace-guide {
+  margin: 0 0 22px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.guide-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.guide-heading > svg {
+  margin-top: 3px;
+  color: var(--green);
+  flex: none;
+}
+.workspace-guide .guide-heading h2 {
+  font-size: 17px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.workspace-guide p {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #52695d;
+  margin-top: 6px;
+}
+.learning-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+.learning-steps > div {
+  padding: 16px;
+  background: #f7faf6;
+  border: 1px solid #e1eadf;
+  border-radius: 10px;
+}
+.learning-steps small {
+  font:
+    11px 'IBM Plex Mono',
+    monospace;
+  color: var(--muted);
+  float: right;
+}
+.learning-steps svg {
+  color: var(--green);
+}
+.learning-steps h3 {
+  font-size: 14px;
+  margin: 10px 0 5px;
+}
+.learning-steps p {
+  min-height: 64px;
+  margin-bottom: 14px;
+}
+.learning-steps button {
+  white-space: normal;
+  text-align: left;
+}
+.learning-glossary {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.learning-glossary summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--green);
+  font-weight: 600;
+}
+.learning-glossary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 0;
+}
+.learning-glossary dt {
+  font-size: 12px;
+  font-weight: 600;
+}
+.learning-glossary dd {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #52695d;
+}
+.workspace-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.workspace-capabilities span {
+  background: var(--mint);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--green);
+}
+.workspace-guide .workspace-switch-note,
+.workspace-guide .workspace-shared-note {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.workspace-guide p button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 1050px) {
+  .learning-steps {
+    gap: 10px;
+  }
+  .learning-steps > div {
+    padding: 12px;
+  }
+  .learning-steps p {
+    min-height: 84px;
+  }
+}
+@media (max-width: 760px) {
+  .workspace-guide {
+    padding: 17px;
+  }
+  .learning-steps,
+  .learning-glossary dl {
+    grid-template-columns: 1fr;
+  }
+  .learning-steps p {
+    min-height: 0;
+  }
+  .workspace-link {
+    padding: 11px 10px;
+  }
+  .workspace-link strong {
+    font-size: 13px;
+  }
+  .workspace-menu {
+    margin-bottom: 10px;
+  }
+  .learning-steps button {
+    width: 100%;
+    justify-content: center;
+  }
+}
